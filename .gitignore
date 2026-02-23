@@ -1,0 +1,20 @@
+# Integronix — Root .gitignore
+
+# ── Backend ──────────────────────────────────────────────
+backend/.env
+backend/__pycache__/
+backend/**/__pycache__/
+backend/*.pyc
+backend/.venv/
+backend/venv/
+
+# ── Frontend ─────────────────────────────────────────────
+frontend/.env.local
+frontend/.next/
+frontend/node_modules/
+frontend/out/
+
+# ── General ──────────────────────────────────────────────
+.DS_Store
+*.log
+.env
