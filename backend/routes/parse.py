@@ -32,8 +32,10 @@ class ParseRequest(BaseModel):
 class ParseResponse(BaseModel):
     session_id: str
     extraction: ExtractionResult
+    extraction_metadata: dict = {}
     diagnosis_count: int
     observation_count: int
+
 
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
@@ -94,21 +96,24 @@ async def parse_clinical_text(body: ParseRequest):
             detail="raw_text is too short. Minimum 50 characters required.",
         )
 
+    session_id = body.session_id or str(uuid.uuid4())
+
     try:
-        extraction = await extract_clinical_entities(body.raw_text)
-    except ValueError as e:
-        raise HTTPException(status_code=422, detail=str(e))
+        # extract_clinical_entities now returns (ExtractionResult, metadata_dict)
+        extraction, metadata = await extract_clinical_entities(
+            body.raw_text,
+            session_id=session_id,
+        )
     except Exception as e:
         raise HTTPException(
             status_code=500,
             detail=f"LLM extraction failed: {str(e)}",
         )
 
-    session_id = body.session_id or str(uuid.uuid4())
-
     return ParseResponse(
         session_id=session_id,
         extraction=extraction,
+        extraction_metadata=metadata,
         diagnosis_count=len(extraction.diagnoses),
         observation_count=len(extraction.observations),
     )
