@@ -261,3 +261,56 @@ ORDER BY sim.confidence DESC;
 ```
 
 You should see 6 rows with full SNOMED + ICD details. If this works — **schema is correct.**
+
+---
+
+## Step 11: Audit Log Table (Explainability) ⭐ NEW
+
+> This table is the **heart of the explainability story**.
+> Every LangGraph node logs what it did, which model it used, and why.
+> Judges can query this and see every decision — not just the final code.
+
+```sql
+CREATE TABLE audit_log (
+    id              UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    session_id      UUID,
+    node_name       TEXT        NOT NULL,   -- doc_processing | clinical_extract | snomed_resolve | icd_decision | ...
+    input_snapshot  JSONB,                  -- State fields going INTO this node
+    output_snapshot JSONB,                  -- State fields coming OUT of this node
+    -- LLM tracking
+    model_name      TEXT,                   -- e.g. "llama-3.3-70b-versatile"
+    model_version   TEXT,                   -- e.g. "2024-12"
+    prompt_tokens   INTEGER,
+    completion_tokens INTEGER,
+    total_tokens    INTEGER,
+    latency_ms      INTEGER,
+    -- Standard version tracking
+    icd_version     TEXT        DEFAULT 'ICD-10-CM-2024',
+    snomed_version  TEXT        DEFAULT 'SNOMED-CT-2024',
+    -- Outcome
+    status          TEXT        CHECK (status IN ('success','fallback_used','failed')),
+    fallback_reason TEXT,                   -- Why fallback was triggered
+    error_detail    TEXT,                   -- Set if status = 'failed'
+    created_at      TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Index for session-based audit trail
+CREATE INDEX idx_audit_log_session   ON audit_log (session_id);
+CREATE INDEX idx_audit_log_node      ON audit_log (node_name);
+CREATE INDEX idx_audit_log_created   ON audit_log (created_at DESC);
+```
+
+**Query to see a full decision audit trail for any session:**
+```sql
+SELECT
+    node_name,
+    status,
+    model_name,
+    total_tokens,
+    latency_ms,
+    output_snapshot->>'final_icd_code' AS icd_code,
+    created_at
+FROM audit_log
+WHERE session_id = '[your-session-id]'
+ORDER BY created_at ASC;
+```

@@ -1,4 +1,5 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator, model_validator
+from pydantic import ConfigDict
 from typing import Optional, List
 
 
@@ -8,6 +9,14 @@ class SnomedCandidate(BaseModel):
     code: Optional[str] = None
     description: str
 
+    @field_validator("code", mode="before")
+    @classmethod
+    def sanitize_null_string(cls, v):
+        """LLM sometimes returns the string 'null' instead of JSON null. Fix it."""
+        if isinstance(v, str) and v.strip().lower() in ("null", "none", ""):
+            return None
+        return v
+
 
 class DiagnosisEntity(BaseModel):
     text: str
@@ -16,6 +25,14 @@ class DiagnosisEntity(BaseModel):
     snomed_candidate: SnomedCandidate
     comorbidities: List[str] = []
     evidence_text: str
+
+    @field_validator("severity", "laterality", mode="before")
+    @classmethod
+    def sanitize_null_fields(cls, v):
+        """Convert string 'null' to actual None for optional fields."""
+        if isinstance(v, str) and v.strip().lower() in ("null", "none", ""):
+            return None
+        return v
 
 
 class ObservationEntity(BaseModel):
@@ -29,7 +46,7 @@ class ExtractionResult(BaseModel):
     observations: List[ObservationEntity] = []
 
 
-# ── ICD Code Schemas ─────────────────────────────────────────────────────────
+# ── ICD Code Schemas ──────────────────────────────────────────────────────────
 
 class ICDCode(BaseModel):
     code: str
@@ -40,18 +57,19 @@ class ICDCode(BaseModel):
     is_cc: bool
     is_mcc: bool
     base_reimbursement: float
+    icd_version: str = "ICD-10-CM-2024"     # Version tracking ✅
 
 
 class ICDCandidate(ICDCode):
     similarity_score: float
     mapping_type: Optional[str] = None
-    source: str  # "snomed_map" | "embedding"
+    source: str   # "snomed_map" | "embedding" | "text_search"
 
 
-# ── Coding Result Schemas ────────────────────────────────────────────────────
+# ── Audit & Result Schemas ────────────────────────────────────────────────────
 
 class AuditResult(BaseModel):
-    type: str  # EXACT_MATCH | SPECIFICITY_IMPROVEMENT | UNSUPPORTED_CODE | OVERCODING
+    type: str   # EXACT_MATCH | SPECIFICITY_IMPROVEMENT | UNSUPPORTED_CODE | OVERCODING
     ai_code: str
     human_code: str
     explanation: str
@@ -59,15 +77,31 @@ class AuditResult(BaseModel):
     revenue_delta: float
 
 
+class ExtractionMetadata(BaseModel):
+    """Version tracking for every LLM call — logged to audit_log table."""
+    model_config = ConfigDict(protected_namespaces=())
+
+    model: str
+    llm_version: str        # renamed from model_version to avoid Pydantic namespace conflict
+    icd_version: str
+    snomed_version: str
+    attempt: int = 1
+
+
+
 class CodingResult(BaseModel):
     session_id: str
     final_icd_code: str
     confidence_score: float
     structured_entities: ExtractionResult
+    extraction_metadata: Optional[ExtractionMetadata] = None   # Version tracking ✅
     candidate_codes: List[ICDCandidate]
     audit: Optional[AuditResult] = None
     risk_score: float
-    risk_label: str  # LOW | MEDIUM | HIGH
+    risk_label: str   # LOW | MEDIUM | HIGH
+    # Error tracking
+    error_at: Optional[str] = None
+    error_detail: Optional[str] = None
 
 
 # ── Request Schemas ───────────────────────────────────────────────────────────
