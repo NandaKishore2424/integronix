@@ -2,23 +2,27 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 
-from database import get_db_pool, close_db_pool
-from routes import icd, health
+from database import get_client, close_client
+from routes import icd, health, parse
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup — try to connect to DB; don't crash if unreachable
+    # Startup — warm up the HTTP client
     try:
-        await get_db_pool()
-        print("✅ Database connected")
+        client = await get_client()
+        # Quick connectivity test
+        resp = await client.get("/icd_codes", params={"select": "code", "limit": "1"})
+        if resp.status_code == 200:
+            print("✅ Supabase REST API connected")
+        else:
+            print(f"⚠️  Supabase responded with status {resp.status_code}")
     except Exception as e:
-        print(f"⚠️  Database connection failed at startup: {e}")
-        print("   Server is starting without DB — endpoints needing DB will fail gracefully.")
+        print(f"⚠️  Supabase connection warning: {e}")
+        print("   Server starting without DB verification — check env vars.")
     yield
     # Shutdown
-    await close_db_pool()
-
+    await close_client()
 
 
 app = FastAPI(
@@ -31,7 +35,7 @@ app = FastAPI(
 # ── CORS ──────────────────────────────────────────────────────────────────────
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],  # Next.js dev server
+    allow_origins=["http://localhost:3000"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -40,3 +44,4 @@ app.add_middleware(
 # ── Routers ───────────────────────────────────────────────────────────────────
 app.include_router(health.router)
 app.include_router(icd.router, prefix="/api/v1")
+app.include_router(parse.router, prefix="/api/v1")
