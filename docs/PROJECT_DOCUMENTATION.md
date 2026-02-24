@@ -271,6 +271,15 @@ error_detail TEXT
   ```
   final_score = confidence×0.40 + specificity×0.30 + consistency×0.20 + combination×0.10 + negation_penalty
   ```
+- **Phase 5A — Multi-code output:** Returns `icd_codes` list with primary + secondary + additional roles
+  ```json
+  [
+    { "code": "E11.22", "role": "primary",    "rationale": "CC; more specific than SNOMED" },
+    { "code": "E11.40", "role": "secondary",  "rationale": "CC; comorbidity candidate" },
+    { "code": "E11.9",  "role": "additional", "rationale": "broader SNOMED match" }
+  ]
+  ```
+  Secondary/additional only appear when `final_score ≥ 0.40`.
 
 | Component | Formula | Notes |
 |---|---|---|
@@ -291,6 +300,16 @@ error_detail TEXT
 - **Input:** `state["final_icd_code"]`, `state["human_icd_code"]`
 - **Looks up both codes** in `icd_codes` table for description + reimbursement
 - **`financial_delta`** = AI reimbursement − Human reimbursement
+- **Phase 5A — DRG gap detection:** Compares MCC/CC flags and sets `drg_flag`:
+
+| `drg_flag` | Condition | DRG Impact |
+|---|---|---|
+| `MCC_MISSED` | AI=MCC, Human≠MCC | Highest — DRG weight shift |
+| `CC_MISSED` | AI=CC, Human≠CC | Medium — DRG downgrade risk |
+| `MCC_OVERCODED` | Human=MCC, AI≠MCC | Compliance risk |
+| `null` | No gap | None |
+
+`drg_flag` is appended to the `explanation` string and included in both `discrepancy` dict and top-level response.
 
 | Discrepancy Type | Condition |
 |---|---|
@@ -307,9 +326,17 @@ error_detail TEXT
   ```
   risk = (1-confidence)×0.4 + discrepancy_risk×0.4 + delta_boost×0.1 + mcc_boost×0.1
   ```
-- **Discrepancy risk weights:** EXACT_MATCH=0.0, SPECIFICITY_IMPROVEMENT=0.2, OVERCODING=0.5, UNSUPPORTED_CODE=0.6
+- **Phase 5A — DRG-aware MCC boost:**
+
+| Condition | Boost |
+|---|---|
+| `drg_flag == MCC_MISSED` | +0.20 (highest scrutiny) |
+| `drg_flag == CC_MISSED` or `MCC_OVERCODED` | +0.15 |
+| AI code is MCC (no gap) | +0.10 |
+| No MCC/CC | +0.00 |
+
 - **Risk labels:** LOW (<0.35) | MEDIUM (0.35–0.70) | HIGH (>0.70)
-- **DB writes (all non-blocking):** `clinical_cases` + `coding_results` + `audit_log`
+- **DB writes (all non-blocking):** `clinical_cases` + `coding_results` + `audit_log` (now includes `icd_codes` and `drg_flag` in snapshot)
 
 ---
 
@@ -332,20 +359,26 @@ error_detail TEXT
 }
 ```
 
-### `POST /api/v1/code/run` — Response
+### `POST /api/v1/code/run` — Response (Phase 5A)
 ```json
 {
-  "session_id": "...",
+  "session_id": "be0b3821-...",
   "final_icd_code": "E11.22",
   "confidence_score": 0.8507,
   "mapping_path": "direct",
   "resolved_snomed_code": "44054006",
-  "candidates": [...],
+  "icd_codes": [
+    { "code": "E11.22", "role": "primary",    "is_cc": true, "base_reimbursement": 2100, "rationale": "CC; more specific than SNOMED" },
+    { "code": "E11.40", "role": "secondary",  "is_cc": true, "base_reimbursement": 1900, "rationale": "CC; comorbidity candidate" },
+    { "code": "E11.9",  "role": "additional", "is_cc": false,"base_reimbursement": 1200, "rationale": "broader SNOMED match" }
+  ],
   "discrepancy_type": "SPECIFICITY_IMPROVEMENT",
-  "discrepancy": { "explanation": "...", "revenue_delta": 900 },
+  "discrepancy": { "explanation": "... CC missed by human coder — potential DRG downgrade.", "revenue_delta": 900, "drg_flag": "CC_MISSED" },
   "financial_delta": 900,
-  "risk_score": 0.1577,
+  "drg_flag": "CC_MISSED",
+  "risk_score": 0.1727,
   "risk_label": "LOW",
+  "fhir_condition": { "resourceType": "Condition", "code": { "coding": [...] }, "clinicalStatus": {...} },
   "extraction_metadata": { "model": "llama-3.3-70b-versatile", ... },
   "error_at": null
 }
@@ -470,24 +503,71 @@ Full test matrix run against `POST /api/v1/code/run`:
 
 ## 12. Current Project Status
 
-### ✅ Complete — All 9/9 Tests Passing
-- FastAPI backend running on port 8000
-- Supabase connected, all 6 tables created and seeded
-- Full LangGraph pipeline: Nodes 1–8 wired, tested, validated
-- Structured JSON logging for every node and LLM call
-- Error handling: `@safe_node`, exception hierarchy, no crashes in any test
-- Node 5 (embedding fallback) with 3 guardrails (threshold=0.55, chapter exclusion, billable filter)
-- 71 ICD codes + 17 SNOMED concepts vectorized
-- pgvector RPC functions deployed and verified working
-- DB writes: `clinical_cases`, `coding_results`, `audit_log` confirmed
-- Scoring engine: word-boundary regex, negation detection via raw_text, combination code priority
-- 9/9 stress tests passing including embedding fallback and negation-based decision
-
-### 📋 Planned Next
-- Frontend dashboard — ICD result card, audit comparison, risk badge, financial delta chart
-- GitHub push (on user command)
+### ✅ Phase 1–4 + Phase 5A — Backend Complete (All 9/9 Tests Passing)
+- FastAPI backend on port 8000, all 8 nodes wired and tested
+- Supabase connected, 6 tables seeded
+- Structured JSON logging, `@safe_node` error handling, exception hierarchy
+- Node 5 embedding fallback (threshold=0.55, chapter exclusion, vector format fix)
+- Node 6 **multi-code output** — primary/secondary/additional with rationale and score
+- Node 7 **DRG-aware gap detection** — `drg_flag` (MCC_MISSED / CC_MISSED / MCC_OVERCODED)
+- Node 8 **DRG-weighted risk boost** — MCC_MISSED adds +0.20 to risk score
+- **FHIR R4 Condition** included in every API response
+- All 9/9 stress tests passing including embedding fallback + negation detection
 
 ---
+
+## 13. Frontend — Phase 5B
+
+### Tech Stack
+- **Next.js 14** (App Router, TypeScript)
+- **Tailwind CSS 3** (custom design tokens)
+- **Recharts** (candidate score bar chart)
+- **Lucide React** (icons)
+- No shadcn dependency — all components written from scratch
+
+### Design System
+- Background: `#0d1117` with purple + cyan radial glow gradients
+- Cards: glassmorphism — `rgba(255,255,255,0.08)` + `backdrop-filter: blur(24px)`
+- Primary accent: `#6366f1 → #8b5cf6` gradient
+- Hero heading: gradient text (indigo → purple → sky)
+- Button: gradient with glow shadow, hover lift
+- Typography: Inter (body) + JetBrains Mono (code/labels)
+
+### Page Layout (Two Tabs)
+**Tab 1 — Code Analysis:**
+- Large textarea for clinical notes (monospace, dark, focus ring)
+- Optional human ICD-10 code input for audit comparison
+- 3 pre-loaded sample cases (Diabetes+CKD, Low Back Pain, DM No Complications)
+- Pipeline visualisation sidebar (7 steps with descriptions)
+- Animated pipeline stage label while loading
+
+**Tab 2 — Results:**
+- **Top strip:** session ID, mapping path, SNOMED code, revenue impact, re-analyse button
+- **IcdCodeCard:** Primary code (large font), confidence bar, CC/MCC chips, SNOMED chain, DRG badge
+- **RiskMeter:** SVG circular gauge, LOW/MEDIUM/HIGH colour-coded, risk + confidence stats
+- **MultiCodeList:** Primary/secondary/additional code rows with role icon, score bar, rationale
+- **CandidateChart:** Recharts horizontal bar chart, winner highlighted in bright indigo
+- **AuditCard:** AI vs Human side-by-side, discrepancy badge, revenue delta (large), DRG alert
+- **FhirPanel:** Collapsible, FHIR coding table + raw JSON + copy button
+- **Metadata strip:** Model, ICD version, SNOMED version, LLM attempt
+
+### Components
+| File | Purpose |
+|---|---|
+| `app/page.tsx` | Main page — two-tab shell, pipeline submit handler |
+| `app/layout.tsx` | Root layout — Inter font, metadata |
+| `app/globals.css` | Full design system — glass cards, buttons, bars, tokens |
+| `components/CodeInputPanel.tsx` | Input form with sample cases sidebar |
+| `components/ResultsPanel.tsx` | Results grid orchestrator |
+| `components/IcdCodeCard.tsx` | Primary AI code display |
+| `components/MultiCodeList.tsx` | Primary/secondary/additional code hierarchy |
+| `components/AuditCard.tsx` | Human vs AI comparison with revenue delta |
+| `components/DrgBadge.tsx` | MCC/CC gap alert with pulsing dot |
+| `components/CandidateChart.tsx` | Recharts bar chart of scored candidates |
+| `components/RiskMeter.tsx` | SVG circular risk gauge |
+| `components/FhirPanel.tsx` | Collapsible FHIR R4 JSON panel |
+| `lib/api.ts` | Typed fetch wrapper for `/api/v1/code/run` |
+| `types/coding.ts` | Full TypeScript interfaces for backend response |
 
 ---
 
@@ -499,6 +579,10 @@ cd backend
 source venv/bin/activate
 uvicorn main:app --host 0.0.0.0 --port 8000
 
+# Start frontend
+cd frontend
+npm run dev    # → http://localhost:3001
+
 # Generate embeddings (run once after seeding)
 python3 scripts/generate_embeddings.py
 
@@ -507,4 +591,4 @@ python3 scripts/generate_embeddings.py
 
 ---
 
-*Last updated: 2026-02-24 | Build: Phase 4 Complete*
+*Last updated: 2026-02-24 | Build: Phase 5A+5B Complete*

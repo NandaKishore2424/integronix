@@ -67,6 +67,25 @@ async def audit_comparison_node(state: CodingState) -> CodingState:
     human_reimb = float(human_row["base_reimbursement"]) if human_row else 0.0
     delta       = round(ai_reimb - human_reimb, 2)
 
+    # ── MCC/CC gap detection (DRG-aware) ────────────────────────────────────
+    ai_is_mcc    = bool(ai_row.get("is_mcc"))    if ai_row    else False
+    ai_is_cc     = bool(ai_row.get("is_cc"))     if ai_row    else False
+    human_is_mcc = bool(human_row.get("is_mcc")) if human_row else False
+    human_is_cc  = bool(human_row.get("is_cc"))  if human_row else False
+
+    drg_flag = None
+    drg_note = ""
+    if ai_is_mcc and not human_is_mcc:
+        drg_flag = "MCC_MISSED"
+        drg_note = " MCC missed by human coder — DRG weight impact detected."
+    elif ai_is_cc and not human_is_cc:
+        drg_flag = "CC_MISSED"
+        drg_note = " CC missed by human coder — potential DRG downgrade."
+    elif human_is_mcc and not ai_is_mcc:
+        drg_flag = "MCC_OVERCODED"
+        drg_note = " Human coded MCC not supported by clinical documentation."
+    state["drg_flag"] = drg_flag
+
     # ── Determine discrepancy type ──────────────────────────────────────────
     if ai_code == human_code:
         discrepancy_type = "EXACT_MATCH"
@@ -85,7 +104,7 @@ async def audit_comparison_node(state: CodingState) -> CodingState:
             f"AI selected more specific code '{ai_code}' "
             f"vs human '{human_code}'. "
             f"Clinical documentation supports the more specific code. "
-            f"Revenue impact: +${abs(delta):.2f}"
+            f"Revenue impact: +${abs(delta):.2f}.{drg_note}"
         )
 
     elif _is_more_specific(human_code, ai_code):
@@ -93,7 +112,7 @@ async def audit_comparison_node(state: CodingState) -> CodingState:
         explanation = (
             f"Human code '{human_code}' is more specific than "
             f"clinical documentation supports. AI selected '{ai_code}'. "
-            f"Overcoding risk flagged."
+            f"Overcoding risk flagged.{drg_note}"
         )
 
     else:
@@ -104,13 +123,16 @@ async def audit_comparison_node(state: CodingState) -> CodingState:
         )
 
     discrepancy = {
-        "type":         discrepancy_type,
-        "ai_code":      ai_code,
-        "human_code":   human_code,
+        "type":              discrepancy_type,
+        "ai_code":           ai_code,
+        "human_code":        human_code,
         "ai_description":    ai_row["description"]    if ai_row    else "Unknown",
         "human_description": human_row["description"] if human_row else "Unknown",
-        "explanation":  explanation,
-        "revenue_delta": delta,
+        "explanation":       explanation,
+        "revenue_delta":     delta,
+        "drg_flag":          drg_flag,
+        "ai_is_mcc":         ai_is_mcc,
+        "ai_is_cc":          ai_is_cc,
     }
 
     state["discrepancy_type"] = discrepancy_type
@@ -124,6 +146,7 @@ async def audit_comparison_node(state: CodingState) -> CodingState:
         ai_code=ai_code,
         human_code=human_code,
         financial_delta=delta,
+        drg_flag=drg_flag,
     )
 
     return state

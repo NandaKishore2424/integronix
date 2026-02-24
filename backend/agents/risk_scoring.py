@@ -41,6 +41,7 @@ def _compute_risk(state: CodingState) -> tuple[float, str]:
     confidence   = float(state.get("confidence_score", 0.5))
     discrepancy  = state.get("discrepancy_type", "NO_COMPARISON")
     delta        = abs(state.get("financial_delta") or 0.0)
+    drg_flag     = state.get("drg_flag")
     is_mcc       = False
 
     # Check if final code is MCC
@@ -51,17 +52,24 @@ def _compute_risk(state: CodingState) -> tuple[float, str]:
             is_mcc = True
             break
 
-    # Base risk = inverted confidence (low confidence = high risk)
+    # Base risk = inverted confidence
     base_risk = round(1.0 - confidence, 4)
 
-    # Discrepancy risk boost
+    # Discrepancy risk
     discrepancy_boost = DISCREPANCY_RISK.get(discrepancy, 0.2)
 
     # Financial delta risk (large delta = higher scrutiny)
-    delta_boost = min(delta / 5000.0, 0.2)  # Cap at 0.2
+    delta_boost = min(delta / 5000.0, 0.2)
 
-    # MCC risk boost (high-value codes get extra scrutiny)
-    mcc_boost = 0.1 if is_mcc else 0.0
+    # DRG-aware MCC/CC boost
+    if drg_flag == "MCC_MISSED":
+        mcc_boost = 0.20   # Significant DRG weight impact
+    elif drg_flag in ("CC_MISSED", "MCC_OVERCODED"):
+        mcc_boost = 0.15
+    elif is_mcc:
+        mcc_boost = 0.10   # Normal MCC scrutiny
+    else:
+        mcc_boost = 0.0
 
     raw_score = base_risk * 0.4 + discrepancy_boost * 0.4 + delta_boost * 0.1 + mcc_boost * 0.1
     score = round(min(raw_score, 1.0), 4)
@@ -135,11 +143,13 @@ async def risk_scoring_node(state: CodingState) -> CodingState:
             "node_name":    "risk_scoring",
             "output_snapshot": {
                 "final_icd_code":   state.get("final_icd_code"),
+                "icd_codes":        state.get("icd_codes", []),
                 "confidence_score": state.get("confidence_score"),
                 "risk_score":       risk_score,
                 "risk_label":       risk_label,
                 "discrepancy_type": state.get("discrepancy_type"),
                 "financial_delta":  state.get("financial_delta"),
+                "drg_flag":         state.get("drg_flag"),
             },
             "model_name":     metadata.get("model"),
             "model_version":  metadata.get("llm_version"),
