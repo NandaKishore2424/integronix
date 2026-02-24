@@ -36,16 +36,21 @@ class CodingState(TypedDict, total=False):
     # Node 6 output
     final_icd_code: str
     confidence_score: float
+    icd_codes: List[dict]           # Multi-code list: primary + secondary + additional
 
     # Node 7 input/output
     human_icd_code: Optional[str]
     discrepancy_type: Optional[str]
     discrepancy: Optional[dict]
     financial_delta: Optional[float]
+    drg_flag: Optional[str]         # e.g. "MCC_MISSED" | "CC_MISSED" | None
 
     # Node 8 output
     risk_score: float
     risk_label: str                 # LOW | MEDIUM | HIGH
+
+    # FHIR output (cosmetic — enterprise signal)
+    fhir_condition: Optional[dict]
 
     # Error tracing (set by @safe_node on failure)
     error_at: Optional[str]

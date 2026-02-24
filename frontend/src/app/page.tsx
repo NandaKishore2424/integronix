@@ -1,95 +1,187 @@
-import Image from "next/image";
-import styles from "./page.module.css";
+'use client';
+
+import { useState } from 'react';
+import { Activity, FlaskConical, ChevronRight, Zap } from 'lucide-react';
+import { CodeResponse } from '@/types/coding';
+import { runCodingPipeline, ApiError } from '@/lib/api';
+import CodeInputPanel from '@/components/CodeInputPanel';
+import ResultsPanel from '@/components/ResultsPanel';
+
+type Tab = 'analyze' | 'results';
+
+const PIPELINE_STAGES = [
+  'Extracting clinical entities…',
+  'Resolving SNOMED concept…',
+  'Mapping to ICD-10-CM…',
+  'Scoring candidates…',
+  'Computing risk score…',
+];
 
 export default function Home() {
+  const [activeTab, setActiveTab] = useState<Tab>('analyze');
+  const [loading, setLoading] = useState(false);
+  const [stageIdx, setStageIdx] = useState(0);
+  const [result, setResult] = useState<CodeResponse | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  async function handleSubmit(text: string, humanCode: string) {
+    setLoading(true);
+    setError(null);
+    setStageIdx(0);
+
+    const iv = setInterval(() => setStageIdx(i => (i + 1) % PIPELINE_STAGES.length), 900);
+
+    try {
+      const data = await runCodingPipeline({ raw_text: text, human_icd_code: humanCode || null });
+      clearInterval(iv);
+      setResult(data);
+      setActiveTab('results');
+    } catch (e) {
+      clearInterval(iv);
+      setError(e instanceof ApiError ? e.message : 'Pipeline failed. Is the backend running on port 8000?');
+    } finally {
+      setLoading(false);
+    }
+  }
+
   return (
-    <main className={styles.main}>
-      <div className={styles.description}>
-        <p>
-          Get started by editing&nbsp;
-          <code className={styles.code}>src/app/page.tsx</code>
-        </p>
-        <div>
-          <a
-            href="https://vercel.com?utm_source=create-next-app&utm_medium=appdir-template&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            By{" "}
-            <Image
-              src="/vercel.svg"
-              alt="Vercel Logo"
-              className={styles.vercelLogo}
-              width={100}
-              height={24}
-              priority
-            />
-          </a>
+    <div className="min-h-screen flex flex-col">
+
+      {/* ── Navigation ── */}
+      <header className="sticky top-0 z-40 border-b border-white/[0.07]"
+        style={{ background: 'rgba(13,17,23,0.90)', backdropFilter: 'blur(20px)' }}>
+        <div className="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between">
+
+          {/* Logo */}
+          <div className="flex items-center gap-3">
+            <div className="w-8 h-8 rounded-lg flex items-center justify-center"
+              style={{ background: 'linear-gradient(135deg,#6366f1,#8b5cf6)', boxShadow: '0 0 20px rgba(99,102,241,0.5)' }}>
+              <Activity className="w-4 h-4 text-white" />
+            </div>
+            <span className="font-bold text-lg text-white tracking-tight">Integronix</span>
+            <span className="hidden sm:flex items-center gap-1 text-[11px] font-semibold text-slate-400 border border-white/10 rounded-full px-3 py-1">
+              <Zap className="w-2.5 h-2.5 text-yellow-400" />
+              AI Clinical Coding Engine
+            </span>
+          </div>
+
+          {/* Status */}
+          <div className="flex items-center gap-2">
+            <span className="inline-block w-2 h-2 rounded-full bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.7)] animate-pulse" />
+            <span className="text-xs text-slate-400">API Connected</span>
+          </div>
+        </div>
+      </header>
+
+      {/* ── Hero ── */}
+      <div className="px-6 pt-12 pb-8 border-b border-white/[0.06]">
+        <div className="max-w-7xl mx-auto">
+          {/* Pills */}
+          <div className="flex flex-wrap gap-2 mb-5">
+            {['ICD-10-CM-2024', 'SNOMED-CT-2024', 'FHIR R4', 'DRG-Aware', 'LangGraph'].map(label => (
+              <span key={label}
+                className="text-[11px] font-semibold px-3 py-1 rounded-full border"
+                style={{ color: '#a78bfa', borderColor: 'rgba(139,92,246,0.3)', background: 'rgba(139,92,246,0.1)' }}>
+                {label}
+              </span>
+            ))}
+          </div>
+
+          {/* Heading with gradient */}
+          <h1 className="text-4xl sm:text-5xl font-extrabold leading-[1.1] mb-4">
+            <span className="text-white">Intelligent</span>{' '}
+            <span style={{ background: 'linear-gradient(135deg,#818cf8,#c084fc,#38bdf8)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', backgroundClip: 'text' }}>
+              Clinical Code Auditor
+            </span>
+          </h1>
+          <p className="text-slate-400 text-base max-w-2xl leading-relaxed">
+            Paste clinical documentation. The engine extracts diagnoses through a{' '}
+            <span className="text-slate-200 font-medium">8-node LangGraph pipeline</span>,
+            maps SNOMED concepts to ICD-10-CM, and identifies revenue gaps — with{' '}
+            <span className="text-slate-200 font-medium">DRG-aware risk scoring</span> and FHIR R4 output.
+          </p>
+
+          {/* Stats row */}
+          <div className="flex flex-wrap gap-6 mt-6">
+            {[
+              ['9/9', 'Tests Passing'],
+              ['<2s', 'Pipeline Latency'],
+              ['8', 'LangGraph Nodes'],
+              ['FHIR R4', 'Enterprise Output'],
+            ].map(([val, lbl]) => (
+              <div key={lbl}>
+                <p className="text-xl font-bold text-white">{val}</p>
+                <p className="text-xs text-slate-500">{lbl}</p>
+              </div>
+            ))}
+          </div>
         </div>
       </div>
 
-      <div className={styles.center}>
-        <Image
-          className={styles.logo}
-          src="/next.svg"
-          alt="Next.js Logo"
-          width={180}
-          height={37}
-          priority
-        />
+      {/* ── Tabs ── */}
+      <div className="border-b border-white/[0.06] px-6" style={{ background: 'rgba(13,17,23,0.6)' }}>
+        <div className="max-w-7xl mx-auto flex items-end gap-1 pt-3">
+          <button
+            onClick={() => setActiveTab('analyze')}
+            className={`tab-btn ${activeTab === 'analyze' ? 'active' : ''}`}>
+            <FlaskConical className="w-3.5 h-3.5" />
+            Code Analysis
+          </button>
+          <button
+            onClick={() => result && setActiveTab('results')}
+            disabled={!result}
+            className={`tab-btn ${activeTab === 'results' ? 'active' : ''} ${!result ? 'opacity-35 cursor-not-allowed' : ''}`}>
+            <Activity className="w-3.5 h-3.5" />
+            Results
+            {result && (
+              <span className="font-mono text-[11px] px-2 py-0.5 rounded"
+                style={{ background: 'rgba(99,102,241,0.25)', color: '#a78bfa', border: '1px solid rgba(99,102,241,0.4)' }}>
+                {result.final_icd_code}
+              </span>
+            )}
+          </button>
+
+          {result && (
+            <div className="ml-auto flex items-center gap-1.5 text-xs text-slate-500 self-center pb-1">
+              <ChevronRight className="w-3 h-3" />
+              <span className="font-mono">{result.session_id.slice(0, 8)}…</span>
+            </div>
+          )}
+        </div>
       </div>
 
-      <div className={styles.grid}>
-        <a
-          href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template&utm_campaign=create-next-app"
-          className={styles.card}
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <h2>
-            Docs <span>-&gt;</span>
-          </h2>
-          <p>Find in-depth information about Next.js features and API.</p>
-        </a>
+      {/* ── Content ── */}
+      <main className="flex-1 px-6 py-8">
+        <div className="max-w-7xl mx-auto">
+          {activeTab === 'analyze' && (
+            <CodeInputPanel
+              onSubmit={handleSubmit}
+              loading={loading}
+              stageLabel={PIPELINE_STAGES[stageIdx]}
+              error={error}
+            />
+          )}
+          {activeTab === 'results' && result && (
+            <ResultsPanel result={result} onReanalyze={() => setActiveTab('analyze')} />
+          )}
+        </div>
+      </main>
 
-        <a
-          href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template&utm_campaign=create-next-app"
-          className={styles.card}
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <h2>
-            Learn <span>-&gt;</span>
-          </h2>
-          <p>Learn about Next.js in an interactive course with&nbsp;quizzes!</p>
-        </a>
-
-        <a
-          href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template&utm_campaign=create-next-app"
-          className={styles.card}
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <h2>
-            Templates <span>-&gt;</span>
-          </h2>
-          <p>Explore starter templates for Next.js.</p>
-        </a>
-
-        <a
-          href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template&utm_campaign=create-next-app"
-          className={styles.card}
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <h2>
-            Deploy <span>-&gt;</span>
-          </h2>
-          <p>
-            Instantly deploy your Next.js site to a shareable URL with Vercel.
-          </p>
-        </a>
-      </div>
-    </main>
+      {/* ── Footer ── */}
+      <footer className="border-t border-white/[0.06] px-6 py-4">
+        <div className="max-w-7xl mx-auto flex items-center justify-between">
+          <span className="text-xs text-slate-600">Integronix © 2026 · ICD-10-CM-2024 · SNOMED-CT-2024</span>
+          <div className="flex items-center gap-3 text-xs text-slate-600">
+            <span>LLaMA-3.3-70B</span>
+            <span className="w-px h-3 bg-slate-700" />
+            <span>pgvector</span>
+            <span className="w-px h-3 bg-slate-700" />
+            <span>LangGraph</span>
+            <span className="w-px h-3 bg-slate-700" />
+            <span>FastAPI</span>
+          </div>
+        </div>
+      </footer>
+    </div>
   );
 }

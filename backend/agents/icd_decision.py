@@ -146,39 +146,89 @@ async def icd_decision_node(state: CodingState) -> CodingState:
     session_id = str(state.get("session_id", ""))
     candidates = state.get("candidate_icd_codes", [])
     entities   = state.get("structured_entities", {})
-    raw_text   = state.get("raw_text", "")   # ← for negation detection
+    raw_text   = state.get("raw_text", "")   # for negation detection
 
-    # ── Step 1: Guard — no candidates ──────────────────────────────────────
+    # ── Guard: no candidates ────────────────────────────────────────────────
     if not candidates:
-        log.warning(
-            "icd_decision_no_candidates",
-            session_id=session_id,
-            mapping_path=state.get("mapping_path"),
-        )
+        log.warning("icd_decision_no_candidates", session_id=session_id,
+                    mapping_path=state.get("mapping_path"))
         state["final_icd_code"]   = "UNKNOWN"
         state["confidence_score"] = 0.0
+        state["icd_codes"]        = []
         return state
 
-    # ── Step 2: Filter non-billable (already done in Node 4, but double-check)
     candidates = [c for c in candidates if c.get("is_billable", True)]
     if not candidates:
         state["final_icd_code"]   = "UNKNOWN"
         state["confidence_score"] = 0.0
+        state["icd_codes"]        = []
         return state
 
-    # ── Steps 3-6: Score every candidate ───────────────────────────────────
+    # ── Score every candidate ───────────────────────────────────────────────
     scored = []
     for c in candidates:
-        score = _final_score(c, entities, raw_text)   # ← pass raw_text
+        score = _final_score(c, entities, raw_text)
         scored.append({**c, "final_score": score})
 
-    # ── Step 7: Select highest scoring code ────────────────────────────────
     scored.sort(key=lambda x: x["final_score"], reverse=True)
     winner = scored[0]
 
-    state["final_icd_code"]   = winner["code"]
-    state["confidence_score"] = winner["final_score"]
-    state["candidate_icd_codes"] = scored   # Update with scores for audit
+    state["final_icd_code"]      = winner["code"]
+    state["confidence_score"]    = winner["final_score"]
+    state["candidate_icd_codes"] = scored
+
+    # ── Build multi-code list (RCM-style) ────────────────────────────────────
+    def _rationale(c: dict, role: str) -> str:
+        parts = []
+        if c.get("is_mcc"):
+            parts.append("MCC — Major Complication/Comorbidity")
+        elif c.get("is_cc"):
+            parts.append("CC — Complication/Comorbidity")
+        mt = c.get("mapping_type", "")
+        if mt == "exact":
+            parts.append("exact SNOMED match")
+        elif mt == "narrower":
+            parts.append("more specific than SNOMED concept")
+        elif mt == "approximate":
+            parts.append(f"semantic match ({c.get('confidence', 0):.0%} similarity)")
+        elif mt == "broader":
+            parts.append("broader SNOMED match")
+        if role == "secondary":
+            parts.append("comorbidity candidate")
+        elif role == "additional":
+            parts.append("supplementary specificity code")
+        if not parts:
+            parts.append("billable ICD-10-CM code")
+        return "; ".join(parts)
+
+    icd_codes = [{
+        "code":               winner["code"],
+        "description":        winner.get("description", ""),
+        "role":               "primary",
+        "final_score":        winner["final_score"],
+        "is_mcc":             winner.get("is_mcc", False),
+        "is_cc":              winner.get("is_cc", False),
+        "base_reimbursement": winner.get("base_reimbursement", 0),
+        "rationale":          _rationale(winner, "primary"),
+    }]
+
+    role_labels = ["secondary", "additional"]
+    role_idx = 0
+    for c in scored[1:]:
+        if c["final_score"] >= 0.40 and role_idx < len(role_labels):
+            icd_codes.append({
+                "code":               c["code"],
+                "description":        c.get("description", ""),
+                "role":               role_labels[role_idx],
+                "final_score":        c["final_score"],
+                "is_mcc":             c.get("is_mcc", False),
+                "is_cc":              c.get("is_cc", False),
+                "base_reimbursement": c.get("base_reimbursement", 0),
+                "rationale":          _rationale(c, role_labels[role_idx]),
+            })
+            role_idx += 1
+
+    state["icd_codes"] = icd_codes
 
     log.info(
         "icd_selected",
@@ -187,7 +237,7 @@ async def icd_decision_node(state: CodingState) -> CodingState:
         confidence_score=winner["final_score"],
         mapping_path=state.get("mapping_path"),
         candidates_evaluated=len(scored),
+        multi_codes_returned=len(icd_codes),
         runner_up=scored[1]["code"] if len(scored) > 1 else None,
     )
-
     return state
