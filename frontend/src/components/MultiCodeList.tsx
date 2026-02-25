@@ -6,7 +6,7 @@ import { Award, Star, Plus } from 'lucide-react';
 interface Props { codes: IcdCode[] }
 
 const ROLE_CONFIG = {
-    primary: { label: 'Primary', icon: Award, color: 'text-accent-light', bg: 'border-accent/25 bg-accent/10' },
+    primary: { label: 'Primary Diagnosis', icon: Award, color: 'text-accent-light', bg: 'border-accent/25 bg-accent/10' },
     secondary: { label: 'Secondary', icon: Star, color: 'text-warning', bg: 'border-warning/20 bg-warning/8' },
     additional: { label: 'Additional', icon: Plus, color: 'text-slate-400', bg: 'border-white/10 bg-white/[0.03]' },
 };
@@ -15,7 +15,7 @@ export default function MultiCodeList({ codes }: Props) {
     if (!codes || codes.length === 0) {
         return (
             <div className="glass-card p-6 flex items-center justify-center text-slate-500 text-sm">
-                No ICD codes returned.
+                No codes returned for this case.
             </div>
         );
     }
@@ -24,7 +24,7 @@ export default function MultiCodeList({ codes }: Props) {
         <div className="glass-card p-6 flex flex-col gap-4">
             <div className="section-header">
                 <Award className="w-3 h-3" />
-                ICD-10-CM Code Hierarchy
+                ICD-10-CM Code Recommendations
             </div>
 
             <div className="flex flex-col gap-3">
@@ -52,12 +52,12 @@ export default function MultiCodeList({ codes }: Props) {
                                             </span>
                                             {c.is_mcc && (
                                                 <span className="text-[10px] font-bold uppercase tracking-wide px-2 py-0.5 rounded bg-danger/15 text-danger-light border border-danger/25">
-                                                    MCC
+                                                    High Severity
                                                 </span>
                                             )}
                                             {c.is_cc && !c.is_mcc && (
                                                 <span className="text-[10px] font-bold uppercase tracking-wide px-2 py-0.5 rounded bg-warning/15 text-warning-light border border-warning/25">
-                                                    CC
+                                                    Complication
                                                 </span>
                                             )}
                                         </div>
@@ -98,7 +98,7 @@ export default function MultiCodeList({ codes }: Props) {
 
             {/* Total reimbursement */}
             <div className="border-t border-white/[0.06] pt-3 flex justify-between items-center">
-                <span className="text-xs text-slate-500">Combined DRG Base Value</span>
+                <span className="text-xs text-slate-500">Combined Estimated Reimbursement</span>
                 <span className="text-sm font-bold text-success">
                     ${codes.reduce((s, c) => s + c.base_reimbursement, 0).toLocaleString()}
                 </span>

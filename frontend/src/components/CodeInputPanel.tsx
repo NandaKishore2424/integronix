@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { Send, Loader2, AlertCircle, FileText, Hash, Lightbulb } from 'lucide-react';
+import { Send, Loader2, AlertCircle, FileText, Hash, BookOpen } from 'lucide-react';
 
 interface Props {
     onSubmit: (text: string, humanCode: string) => void;
@@ -22,7 +22,7 @@ const SAMPLE_CASES = [
         code: '',
     },
     {
-        label: 'DM No Complications',
+        label: 'Uncomplicated Diabetes',
         text: 'Patient has diabetes. No complications documented. Blood glucose slightly elevated. No kidney disease noted.',
         code: '',
     },
@@ -67,19 +67,19 @@ export default function CodeInputPanel({ onSubmit, loading, stageLabel, error }:
                         <textarea
                             className="clinical-textarea"
                             rows={9}
-                            placeholder={`Paste clinical notes, discharge summary, or SOAP note here…\n\nExample:\n"Patient has Type 2 diabetes mellitus with chronic kidney disease stage 3. eGFR is 42 mL/min."`}
+                            placeholder={`Paste discharge summary, progress notes, or SOAP documentation here…\n\nExample:\n"Patient has Type 2 diabetes mellitus with chronic kidney disease stage 3. eGFR is 42 mL/min."`}
                             value={text}
                             onChange={e => setText(e.target.value)}
                             disabled={loading}
                         />
                     </div>
 
-                    {/* Human ICD code (optional) */}
+                    {/* Existing ICD code (optional) */}
                     <div>
                         <label className="flex items-center gap-2 text-sm font-semibold text-slate-200 mb-2">
                             <Hash className="w-4 h-4 text-slate-400" />
-                            Human Coder ICD-10 Code
-                            <span className="text-xs font-normal text-slate-500 ml-1">(optional — enables audit comparison)</span>
+                            Existing Code for Review
+                            <span className="text-xs font-normal text-slate-500 ml-1">(optional — enables compliance comparison)</span>
                         </label>
                         <input
                             type="text"
@@ -110,24 +110,24 @@ export default function CodeInputPanel({ onSubmit, loading, stageLabel, error }:
                             </div>
                         ) : (
                             <span className="text-xs text-slate-600">
-                                Pipeline: 8 nodes · LLaMA-3.3-70B · SNOMED-CT-2024
+                                Validates against ICD-10-CM 2024 · FHIR R4 output
                             </span>
                         )}
                         <button type="submit" className="btn-primary flex items-center gap-2" disabled={!canSubmit}>
                             {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
-                            {loading ? 'Analysing…' : 'Run Analysis'}
+                            {loading ? 'Analysing…' : 'Analyse Documentation'}
                         </button>
                     </div>
                 </form>
             </div>
 
-            {/* ── Sidebar: samples + tips ── */}
+            {/* ── Sidebar ── */}
             <div className="flex flex-col gap-4">
 
                 {/* Sample cases */}
                 <div className="glass-card p-5">
                     <div className="section-header">
-                        <Lightbulb className="w-3 h-3" />
+                        <BookOpen className="w-3 h-3" />
                         Sample Cases
                     </div>
                     <div className="flex flex-col gap-2">
@@ -144,7 +144,7 @@ export default function CodeInputPanel({ onSubmit, loading, stageLabel, error }:
                                 <p className="text-xs text-slate-500 mt-0.5 line-clamp-2">{s.text}</p>
                                 {s.code && (
                                     <span className="mt-1.5 inline-block text-xs font-mono text-slate-400 bg-white/[0.04] px-2 py-0.5 rounded">
-                                        Human: {s.code}
+                                        Current code: {s.code}
                                     </span>
                                 )}
                             </button>
@@ -152,18 +152,18 @@ export default function CodeInputPanel({ onSubmit, loading, stageLabel, error }:
                     </div>
                 </div>
 
-                {/* Pipeline info */}
+                {/* How it works */}
                 <div className="glass-card p-5">
-                    <div className="section-header">Pipeline</div>
+                    <div className="section-header">How It Works</div>
                     <ol className="flex flex-col gap-2">
                         {[
-                            ['1', 'Clinical Extraction', 'LLaMA-3.3-70B via Groq'],
-                            ['2', 'SNOMED Resolution', '2-word sliding window'],
-                            ['3', 'ICD Mapping', 'SNOMED→ICD crosswalk'],
-                            ['4', 'Embedding Fallback', 'pgvector cosine search'],
-                            ['5', 'ICD Decision', '7-step deterministic'],
-                            ['6', 'Audit Comparison', 'DRG-aware gap detection'],
-                            ['7', 'Risk Scoring', 'MCC/CC weight analysis'],
+                            ['1', 'Entity Recognition', 'Diagnoses and conditions extracted'],
+                            ['2', 'Terminology Validation', 'Clinical ontology cross-check'],
+                            ['3', 'Code Mapping', 'ICD-10-CM crosswalk lookup'],
+                            ['4', 'Semantic Fallback', 'Vector similarity matching'],
+                            ['5', 'Code Selection', 'Rule-based specificity engine'],
+                            ['6', 'Compliance Audit', 'Revenue gap detection'],
+                            ['7', 'Risk Assessment', 'Audit probability scoring'],
                         ].map(([n, name, desc]) => (
                             <li key={n} className="flex items-start gap-2.5">
                                 <span className="shrink-0 w-5 h-5 rounded-full bg-accent/15 border border-accent/30 flex items-center justify-center text-[10px] font-bold text-accent-light">
