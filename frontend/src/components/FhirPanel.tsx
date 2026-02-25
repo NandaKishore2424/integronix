@@ -31,8 +31,8 @@ export default function FhirPanel({ fhir }: Props) {
                         <Activity className="w-3 h-3 text-indigo-400" />
                     </div>
                     <div className="text-left">
-                        <p className="text-sm font-semibold text-white">FHIR R4 Condition Resource</p>
-                        <p className="text-xs text-slate-500">{codings.length} ICD-10-CM coding{codings.length !== 1 ? 's' : ''} · Enterprise interoperability output</p>
+                        <p className="text-sm font-semibold text-white">Interoperability Export</p>
+                        <p className="text-xs text-slate-500">{codings.length} ICD-10 code{codings.length !== 1 ? 's' : ''} · Ready for EHR integration</p>
                     </div>
                 </div>
                 <div className="flex items-center gap-3">
@@ -51,7 +51,7 @@ export default function FhirPanel({ fhir }: Props) {
 
                     {/* Coding summary table */}
                     <div className="px-6 py-4 border-b border-white/[0.06]">
-                        <p className="mono-label mb-3">Contained Codings</p>
+                        <p className="mono-label mb-3">Encoded Diagnoses</p>
                         <div className="flex flex-col gap-2">
                             {codings.map((c, i) => (
                                 <div key={c.code} className="flex items-start gap-3 p-3 rounded-lg bg-white/[0.03] border border-white/[0.05]">

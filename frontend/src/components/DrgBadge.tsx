@@ -8,8 +8,8 @@ interface Props { flag: DrgFlag }
 const DRG_CONFIG = {
     MCC_MISSED: {
         icon: ShieldAlert,
-        label: 'MCC Missed',
-        detail: 'Human coder missed a Major Complication/Comorbidity. This triggers a DRG weight downgrade — significant revenue impact.',
+        label: 'Severity Level Underdocumented',
+        detail: 'Documentation supports a higher severity classification. Correcting this code may qualify for a higher reimbursement tier.',
         color: 'text-danger-light',
         border: 'border-danger/25',
         bg: 'bg-danger/10',
@@ -17,8 +17,8 @@ const DRG_CONFIG = {
     },
     CC_MISSED: {
         icon: AlertTriangle,
-        label: 'CC Missed',
-        detail: 'Human coder missed a Complication/Comorbidity. DRG downgrade risk — review for potential DRG reclassification.',
+        label: 'Complication Not Captured',
+        detail: 'A documented complication or comorbidity was not reflected in the submitted code. Review for potential claim reclassification.',
         color: 'text-warning',
         border: 'border-warning/25',
         bg: 'bg-warning/10',
@@ -26,8 +26,8 @@ const DRG_CONFIG = {
     },
     MCC_OVERCODED: {
         icon: TrendingDown,
-        label: 'MCC Overcoded',
-        detail: 'Human coded a Major Complication/Comorbidity not supported by clinical documentation. Compliance risk.',
+        label: 'Severity Level Overstated',
+        detail: 'The submitted code reflects a higher severity than the clinical documentation supports. This presents a compliance risk.',
         color: 'text-orange-400',
         border: 'border-orange-500/25',
         bg: 'bg-orange-500/10',
@@ -46,7 +46,7 @@ export default function DrgBadge({ flag }: Props) {
             <span className={`mt-1 w-2 h-2 rounded-full shrink-0 ${cfg.dot} animate-pulse`} />
             <Icon className={`w-4 h-4 mt-0.5 shrink-0 ${cfg.color}`} />
             <div>
-                <p className={`text-sm font-bold ${cfg.color}`}>DRG Alert: {cfg.label}</p>
+                <p className={`text-sm font-bold ${cfg.color}`}>Billing Alert: {cfg.label}</p>
                 <p className="text-xs text-slate-400 mt-0.5">{cfg.detail}</p>
             </div>
         </div>
