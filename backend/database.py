@@ -1,3 +1,4 @@
+import json
 import httpx
 from config import settings
 from exceptions import DatabaseError
@@ -35,12 +36,19 @@ async def close_client():
         _client = None
 
 
-async def select(table: str, query: str = "*", filters: dict | None = None) -> list[dict]:
+async def select(
+    table: str,
+    query: str = "*",
+    filters: dict | None = None,
+    limit: int | None = None,
+) -> list[dict]:
     """Perform a SELECT query via Supabase PostgREST."""
     client = await get_client()
     params = {"select": query}
     if filters:
         params.update(filters)
+    if limit is not None:
+        params["limit"] = str(limit)
     response = await client.get(f"/{table}", params=params)
     response.raise_for_status()
     return response.json()
@@ -61,7 +69,6 @@ async def rpc(function_name: str, params: dict) -> list[dict] | dict:
 
 async def insert(table: str, data: dict) -> dict | None:
     """Insert a row into a Supabase table via PostgREST. Returns inserted row."""
-    import json
     client = await get_client()
     # Remove None values — let DB defaults handle them
     clean_data = {k: v for k, v in data.items() if v is not None}
@@ -73,10 +80,16 @@ async def insert(table: str, data: dict) -> dict | None:
     if response.status_code in (200, 201):
         rows = response.json()
         return rows[0] if rows else None
-    log.warning(
+    # Raise so callers (audit_log, coding_results) can handle or log appropriately
+    detail = response.text[:300]
+    log.error(
         "insert_failed",
         table=table,
         status=response.status_code,
-        detail=response.text[:200],
+        detail=detail,
     )
-    return None
+    raise DatabaseError(
+        f"Insert into '{table}' failed ({response.status_code}): {detail}",
+        table=table,
+        status=response.status_code,
+    )

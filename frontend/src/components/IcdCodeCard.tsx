@@ -1,21 +1,28 @@
 'use client';
 
-import { CodeResponse } from '@/types/coding';
+import { CodeResponse, MappingPath } from '@/types/coding';
 import DrgBadge from './DrgBadge';
 import { CheckCircle2, ArrowRight, TrendingUp } from 'lucide-react';
 
 interface Props { result: CodeResponse }
 
-const RESOLUTION_COLORS: Record<string, string> = {
+// FIX FE-BUG-002: All 6 MappingPath values explicitly covered
+const RESOLUTION_COLORS: Record<MappingPath, string> = {
     direct: 'text-success bg-success/10 border-success/25',
     embedding: 'text-warning bg-warning/10 border-warning/25',
     no_mapping: 'text-slate-400 bg-white/5 border-white/10',
+    no_snomed: 'text-orange-400 bg-orange-500/10 border-orange-500/25',
+    embedding_failed: 'text-danger bg-danger/10 border-danger/25',
+    unknown: 'text-slate-500 bg-white/[0.03] border-white/[0.06]',
 };
 
-const RESOLUTION_LABELS: Record<string, string> = {
+const RESOLUTION_LABELS: Record<MappingPath, string> = {
     direct: '⚡ High Confidence',
     embedding: '🔍 Semantic Match',
     no_mapping: '⚠ Insufficient Data',
+    no_snomed: '⚠ Ontology Gap',
+    embedding_failed: '✕ Pipeline Error',
+    unknown: '— Unresolved',
 };
 
 export default function IcdCodeCard({ result }: Props) {

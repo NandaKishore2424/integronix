@@ -27,6 +27,11 @@ _groq_client: AsyncGroq | None = None
 def _get_groq_client() -> AsyncGroq:
     global _groq_client
     if _groq_client is None:
+        if not settings.groq_api_key:
+            raise ExtractionError(
+                "GROQ_API_KEY is not configured — check your .env file",
+                config_field="groq_api_key",
+            )
         _groq_client = AsyncGroq(api_key=settings.groq_api_key)
     return _groq_client
 

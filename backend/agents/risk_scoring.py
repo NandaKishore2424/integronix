@@ -1,17 +1,7 @@
 """
-agents/risk_scoring.py — Node 8: Risk Scoring + DB Write
-
-Final node in the pipeline. Computes risk score and writes
-complete results to Supabase (clinical_cases + coding_results + audit_log).
-
-Risk formula:
-  Base: confidence inversion (low confidence → higher risk)
-  Boost: discrepancy type, IS_MCC, financial_delta magnitude
-
-Labels:
-  LOW    → score < 0.35
-  MEDIUM → score 0.35–0.70
-  HIGH   → score > 0.70
+This is the final agent in our pipeline. It calculates a risk score for the
+entire coding process and then writes all the results to our database.
+The risk score helps auditors prioritize which cases to review.
 """
 import uuid
 from datetime import datetime, timezone
@@ -23,28 +13,28 @@ from logger import get_logger, Timer
 
 log = get_logger(__name__)
 
-# Risk weight constants
+# These are the weights we use to calculate risk based on the type of discrepancy.
+# For example, an "OVERCODING" issue is riskier than a "SPECIFICITY_IMPROVEMENT".
 DISCREPANCY_RISK = {
     "EXACT_MATCH":              0.0,
     "NO_COMPARISON":            0.1,
     "SPECIFICITY_IMPROVEMENT":  0.2,
+    "CODE_DIVERGENCE":          0.45,  # Different category — potential wrong code entirely
     "OVERCODING":               0.5,
     "UNSUPPORTED_CODE":         0.6,
 }
 
 
 def _compute_risk(state: CodingState) -> tuple[float, str]:
-    """
-    Deterministic risk computation.
-    Returns (risk_score: float, risk_label: str).
-    """
+    # This function calculates the final risk score based on several factors.
     confidence   = float(state.get("confidence_score", 0.5))
     discrepancy  = state.get("discrepancy_type", "NO_COMPARISON")
     delta        = abs(state.get("financial_delta") or 0.0)
     drg_flag     = state.get("drg_flag")
     is_mcc       = False
 
-    # Check if final code is MCC
+    # First, we check if the final selected code is a Major Complication (MCC).
+    # MCCs have a higher impact on reimbursement, so they carry more risk.
     candidates = state.get("candidate_icd_codes", [])
     final_code = state.get("final_icd_code", "")
     for c in candidates:
@@ -52,42 +42,41 @@ def _compute_risk(state: CodingState) -> tuple[float, str]:
             is_mcc = True
             break
 
-    # Base risk = inverted confidence
+    # The base risk is simply the inverse of our confidence score.
+    # Low confidence means high risk.
     base_risk = round(1.0 - confidence, 4)
 
-    # Discrepancy risk
+    # Add risk based on the type of discrepancy found during the audit.
     discrepancy_boost = DISCREPANCY_RISK.get(discrepancy, 0.2)
 
-    # Financial delta risk (large delta = higher scrutiny)
+    # A larger financial impact (positive or negative) increases the risk.
     delta_boost = min(delta / 5000.0, 0.2)
 
-    # DRG-aware MCC/CC boost
+    # Missing or overcoding a DRG-related code (MCC/CC) significantly increases risk.
     if drg_flag == "MCC_MISSED":
-        mcc_boost = 0.20   # Significant DRG weight impact
+        mcc_boost = 0.20
     elif drg_flag in ("CC_MISSED", "MCC_OVERCODED"):
         mcc_boost = 0.15
     elif is_mcc:
-        mcc_boost = 0.10   # Normal MCC scrutiny
+        mcc_boost = 0.10
     else:
         mcc_boost = 0.0
 
+    # Combine all the factors into a final score.
     raw_score = base_risk * 0.4 + discrepancy_boost * 0.4 + delta_boost * 0.1 + mcc_boost * 0.1
     score = round(min(raw_score, 1.0), 4)
 
+    # Assign a simple label based on the score.
     label = "LOW" if score < 0.35 else ("MEDIUM" if score <= 0.70 else "HIGH")
     return score, label
 
 
 @safe_node("risk_scoring")
 async def risk_scoring_node(state: CodingState) -> CodingState:
-    """
-    LangGraph Node 8 — Risk Scoring + DB Write.
-    Input:  full state after Nodes 1-7
-    Output: state["risk_score"], state["risk_label"] + writes to Supabase
-    """
+    # This is the main function for the final node in our graph.
     session_id = str(state.get("session_id", str(uuid.uuid4())))
 
-    # ── Compute risk ────────────────────────────────────────────────────────
+    # First, we calculate the risk score and label.
     risk_score, risk_label = _compute_risk(state)
     state["risk_score"] = risk_score
     state["risk_label"] = risk_label
@@ -120,7 +109,7 @@ async def risk_scoring_node(state: CodingState) -> CodingState:
             "resolved_snomed_code": state.get("resolved_snomed_code"),
             "mapping_path":         state.get("mapping_path"),
             "ai_icd_code":          state.get("final_icd_code"),
-            "confidence_score":     risk_score,
+            "confidence_score":     state.get("confidence_score", 0.0),   # FIX: was storing risk_score here
             "candidate_codes":      state.get("candidate_icd_codes", []),
             "human_icd_code":       state.get("human_icd_code"),
             "discrepancy_type":     state.get("discrepancy_type", "NO_COMPARISON"),

@@ -1,18 +1,9 @@
 """
-agents/node_runner.py — Safe node execution wrapper for LangGraph.
-
-Wraps any node function with:
-  1. Structured logging (entry + exit)
-  2. Latency measurement
-  3. Exception catching → NodeExecutionError
-  4. State error_at field marking (graph continues, not crashes)
-
-Usage:
-    from agents.node_runner import safe_node
-    
-    @safe_node("snomed_resolve")
-    async def snomed_resolver_node(state: CodingState) -> CodingState:
-        ...
+This is a utility that we use to wrap all of our agent nodes.
+It's a decorator that adds important features to each node automatically:
+  - It logs when a node starts and finishes.
+  - It measures how long each node takes to run.
+  - It catches any errors, so that one failing node doesn't crash the whole process.
 """
 import functools
 from typing import Callable, Awaitable
@@ -24,10 +15,8 @@ log = get_logger(__name__)
 
 
 def safe_node(node_name: str):
-    """
-    Decorator for LangGraph node functions.
-    Adds logging, latency tracking, and exception safety.
-    """
+    # This is a decorator function. We can apply it to any of our agent nodes
+    # by putting `@safe_node("node_name")` above the function definition.
     def decorator(func: Callable[[CodingState], Awaitable[CodingState]]):
         @functools.wraps(func)
         async def wrapper(state: CodingState) -> CodingState:
@@ -39,8 +28,10 @@ def safe_node(node_name: str):
                 session_id=session_id,
             )
 
+            # We'll time how long the node takes to execute.
             with Timer() as timer:
                 try:
+                    # This is where the actual node function gets called.
                     result_state = await func(state)
                     log.info(
                         "node_completed",
@@ -52,9 +43,11 @@ def safe_node(node_name: str):
                     return result_state
 
                 except NodeExecutionError:
-                    raise  # Don't double-wrap
+                    raise  # Don't re-wrap our custom errors.
 
                 except Exception as exc:
+                    # If any other error happens, we log it and mark it in the state.
+                    # This allows the graph to potentially recover or handle the error gracefully.
                     log.error(
                         "node_failed",
                         node_name=node_name,
@@ -63,7 +56,7 @@ def safe_node(node_name: str):
                         status="failed",
                         error=str(exc),
                     )
-                    # Mark error in state — graph CAN continue with fallback routing
+                    # By adding the error to the state, subsequent nodes can see that something went wrong.
                     state["error_at"] = node_name
                     state["error_detail"] = str(exc)
                     return state

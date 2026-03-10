@@ -3,7 +3,7 @@
 import { Discrepancy, DrgFlag } from '@/types/coding';
 import { formatCurrency } from '@/lib/api';
 import DrgBadge from './DrgBadge';
-import { ArrowLeftRight, TrendingUp, TrendingDown, CheckCircle2, AlertOctagon } from 'lucide-react';
+import { ArrowLeftRight, TrendingUp, TrendingDown, CheckCircle2, AlertOctagon, GitCompareArrows } from 'lucide-react';
 
 interface Props {
     discrepancy: Discrepancy;
@@ -16,6 +16,8 @@ const DISCREPANCY_CFG: Record<string, { label: string; color: string; bg: string
     SPECIFICITY_IMPROVEMENT: { label: 'Higher Specificity Available', color: 'text-accent-light', bg: 'bg-accent/10', border: 'border-accent/25', icon: TrendingUp },
     OVERCODING: { label: 'Overcoding Risk', color: 'text-danger', bg: 'bg-danger/10', border: 'border-danger/25', icon: AlertOctagon },
     UNSUPPORTED_CODE: { label: 'Invalid Code Detected', color: 'text-warning', bg: 'bg-warning/10', border: 'border-warning/25', icon: AlertOctagon },
+    // FIX FE-BUG-001: Added CODE_DIVERGENCE — both codes valid but different ICD categories
+    CODE_DIVERGENCE: { label: 'Category Mismatch — Review Required', color: 'text-orange-400', bg: 'bg-orange-500/10', border: 'border-orange-500/25', icon: ArrowLeftRight },
 };
 
 export default function AuditCard({ discrepancy: d, financialDelta: delta, drgFlag }: Props) {

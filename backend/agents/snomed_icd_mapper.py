@@ -1,16 +1,8 @@
 """
-agents/snomed_icd_mapper.py — Node 4: SNOMED → ICD Direct Mapping
-
-Queries the snomed_icd_map crosswalk table for all ICD codes mapped
-to the resolved SNOMED code. Fetches full ICD metadata for each hit.
-
-Output:
-  state["candidate_icd_codes"]  — list of ICD candidates with scores
-  state["direct_mapped_icd"]    — primary ICD code from direct mapping
-  state["mapping_path"]         — "direct" | "no_mapping" | "no_snomed"
-
-If no direct mapping found → mapping_path = "no_mapping"
-Node 5 (embedding fallback) will handle that case in Phase 4 Step 5.
+This agent is responsible for finding official, direct mappings between
+the SNOMED CT code (identified in the previous step) and the corresponding
+ICD-10-CM code. It queries our internal crosswalk table to find these
+pre-established links. This is the preferred, most reliable path.
 """
 from agents.graph import CodingState
 from agents.node_runner import safe_node
@@ -22,15 +14,12 @@ log = get_logger(__name__)
 
 @safe_node("snomed_icd_map")
 async def snomed_icd_mapping_node(state: CodingState) -> CodingState:
-    """
-    LangGraph Node 4 — SNOMED → ICD Direct Mapping.
-    Input:  state["resolved_snomed_code"]
-    Output: state["candidate_icd_codes"], state["mapping_path"], state["direct_mapped_icd"]
-    """
+    # This is the fourth node in our graph. It tries to find a direct
+    # mapping from the SNOMED code we found to an ICD-10 code.
     session_id = str(state.get("session_id", ""))
     resolved_code = state.get("resolved_snomed_code")
 
-    # ── Guard: no SNOMED code resolved ─────────────────────────────────────
+    # If we don't have a SNOMED code from the previous step, we can't proceed.
     if not resolved_code:
         log.warning(
             "snomed_map_skipped",
@@ -42,7 +31,8 @@ async def snomed_icd_mapping_node(state: CodingState) -> CodingState:
         state["direct_mapped_icd"] = None
         return state
 
-    # ── Query crosswalk table ───────────────────────────────────────────────
+    # We query our 'snomed_icd_map' table, which contains pre-calculated
+    # relationships between SNOMED and ICD-10 codes.
     crosswalk_rows = await select(
         table="snomed_icd_map",
         query="icd_code,mapping_type,confidence,is_primary,notes",
@@ -52,6 +42,7 @@ async def snomed_icd_mapping_node(state: CodingState) -> CodingState:
         },
     )
 
+    # If the query returns nothing, it means there's no direct mapping available.
     if not crosswalk_rows:
         log.warning(
             "snomed_map_no_results",
@@ -63,7 +54,7 @@ async def snomed_icd_mapping_node(state: CodingState) -> CodingState:
         state["direct_mapped_icd"] = None
         return state
 
-    # ── Fetch full ICD details for each mapping ─────────────────────────────
+    # For each mapping we found, we fetch the full details of the ICD code.
     candidates = []
     for row in crosswalk_rows:
         icd_row = await select_one(
@@ -71,12 +62,13 @@ async def snomed_icd_mapping_node(state: CodingState) -> CodingState:
             query="code,description,is_billable,is_cc,is_mcc,base_reimbursement,version",
             filters={
                 "code":        f"eq.{row['icd_code']}",
-                "is_billable": "eq.true",          # Only billable codes go forward
+                "is_billable": "eq.true", # We only care about codes that can actually be used for billing.
             },
         )
         if not icd_row:
-            continue  # Skip non-billable or missing codes
+            continue  # Skip any non-billable codes.
 
+        # We build a list of candidate codes with all their relevant details.
         candidates.append({
             "code":           icd_row["code"],
             "description":    icd_row["description"],
@@ -85,13 +77,13 @@ async def snomed_icd_mapping_node(state: CodingState) -> CodingState:
             "is_mcc":         icd_row["is_mcc"],
             "base_reimbursement": float(icd_row["base_reimbursement"]),
             "icd_version":    icd_row.get("version", "ICD-10-CM-2024"),
-            # Mapping metadata
             "mapping_type":   row["mapping_type"],
             "confidence":     float(row["confidence"]),
             "is_primary":     row.get("is_primary", False),
             "source":         "snomed_map",
         })
 
+    # If, after filtering, we have no valid candidates, we're back to the "no_mapping" state.
     if not candidates:
         log.warning(
             "snomed_map_all_non_billable",

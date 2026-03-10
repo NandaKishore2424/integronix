@@ -1,17 +1,9 @@
 """
-agents/icd_decision.py — Node 6: Deterministic ICD Decision Engine
-
-7-step algorithm to select the best ICD-10 code from candidates.
-NEVER random. NEVER LLM-based. Pure deterministic rule engine.
-
-Steps:
-  1. Build candidate pool from Node 4 (direct mapping)
-  2. Filter: only billable codes pass
-  3. Score specificity (code length, complication keywords, laterality)
-  4. Clinical consistency check (evidence text alignment)
-  5. Combination code priority ("with", "complicated by")
-  6. Confidence-weighted scoring
-  7. Final selection + confidence score computation
+This is the most critical agent in the pipeline. It's a deterministic,
+rule-based engine that selects the final ICD-10 code. It does NOT use an LLM
+for the final decision, ensuring accuracy, auditability, and compliance.
+It follows a strict 7-step algorithm to weigh evidence and select the
+most appropriate code from the candidates.
 """
 from agents.graph import CodingState
 from agents.node_runner import safe_node
@@ -20,20 +12,22 @@ import re
 
 log = get_logger(__name__)
 
-# ── Specificity Scoring Weights ───────────────────────────────────────────────
-# Complication keywords boost specificity score
+# These keywords are used to score how specific a code is.
+# For example, a code description containing "with complications" is more
+# specific than one without, and its score will be boosted.
 COMPLICATION_KEYWORDS = [
-    r"\bwith\b",     # word boundary — does NOT match "without"
+    r"\bwith\b",     # Using a word boundary to avoid matching "without"
     "complicated by", "chronic kidney", "acute", "stage",
     "neuropathy", "retinopathy", "nephropathy", "failure",
 ]
 LATERALITY_KEYWORDS = ["left", "right", "bilateral", "unilateral"]
 COMBINATION_KEYWORDS = [
-    r"\bwith\b",     # word boundary
+    r"\bwith\b",
     "and", "complicated by", "associated with",
 ]
 
-# Negation phrases — if found in evidence, complication codes get penalized
+# If these phrases are found in the text, we apply a penalty to any
+# complication-related codes, as the evidence contradicts them.
 NEGATION_PHRASES = [
     "no complications", "without complications", "no evidence of",
     "no kidney disease", "no renal", "no neuropathy", "no retinopathy",
@@ -43,7 +37,8 @@ NEGATION_PHRASES = [
 
 
 def _kw_match(text: str, keywords: list) -> bool:
-    """Check keyword list — supports regex patterns (for word boundaries)."""
+    # A helper function to check if any keywords are in the text.
+    # It supports simple string matching and regular expressions for more complex cases.
     for kw in keywords:
         if kw.startswith(r"\b") or kw.startswith("("):
             if re.search(kw, text, re.IGNORECASE):
@@ -55,12 +50,13 @@ def _kw_match(text: str, keywords: list) -> bool:
 
 
 def _specificity_score(candidate: dict, entities: dict) -> float:
-    """Step 3: Score code specificity."""
+    # Step 3 of our algorithm: Score the specificity of a candidate code.
     code = candidate.get("code", "")
     description = candidate.get("description", "").lower()
+    # Longer codes are generally more specific, so we start there.
     score = len(code) * 0.15
     diag_text = " ".join(d.get("text", "").lower() for d in entities.get("diagnoses", []))
-    # Use _kw_match to avoid 'without' matching regex \bwith\b
+    # If the code's description and the clinical text both mention a complication, boost the score.
     for kw in COMPLICATION_KEYWORDS:
         if _kw_match(description, [kw]) and _kw_match(diag_text, [kw]):
             score += 0.2
@@ -68,15 +64,17 @@ def _specificity_score(candidate: dict, entities: dict) -> float:
 
 
 def _negation_penalty(candidate: dict, entities: dict, raw_text: str = "") -> float:
-    """Penalizes complication codes when evidence negates the complication."""
+    # This function applies a penalty if a code implies a complication,
+    # but the clinical text explicitly says there are no complications.
     description = candidate.get("description", "").lower()
-    # Use word-boundary check: 'without' must NOT match \bwith\b
     is_complication_code = _kw_match(description, [
         r"\bwith\b", "complicated by", "chronic kidney",
         "neuropathy", "failure", "retinopathy"
     ])
     if not is_complication_code:
-        return 0.0
+        return 0.0 # No penalty if it's not a complication code.
+
+    # We check both the extracted entities and the full raw text for negation phrases.
     entity_text = " ".join(
         (d.get("text", "") + " " + d.get("evidence_text", "")).lower()
         for d in entities.get("diagnoses", [])
@@ -84,15 +82,13 @@ def _negation_penalty(candidate: dict, entities: dict, raw_text: str = "") -> fl
     combined_text = (entity_text + " " + raw_text.lower()).strip()
     for phrase in NEGATION_PHRASES:
         if phrase in combined_text:
-            return -0.4
+            return -0.4 # Apply a significant penalty.
     return 0.0
 
 
 def _clinical_consistency_score(candidate: dict, entities: dict) -> float:
-    """
-    Step 4: Check if ICD description terms appear in clinical evidence.
-    If descriptions align → higher score.
-    """
+    # Step 4: Check if the terms in the ICD code's description actually
+    # appear in the clinical evidence found by the LLM.
     description = candidate.get("description", "").lower()
     all_evidence = " ".join(
         d.get("evidence_text", "").lower() for d in entities.get("diagnoses", [])

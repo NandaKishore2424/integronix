@@ -10,8 +10,22 @@ export default function FhirPanel({ fhir }: Props) {
     const [open, setOpen] = useState(false);
     const [copied, setCopied] = useState(false);
 
-    function copyJson() {
-        navigator.clipboard.writeText(JSON.stringify(fhir, null, 2));
+    // FIX FE-BUG-005: async + await + fallback for Safari/mobile/HTTP clipboard failures
+    async function copyJson() {
+        const text = JSON.stringify(fhir, null, 2);
+        try {
+            await navigator.clipboard.writeText(text);
+        } catch {
+            // Fallback — execCommand is deprecated but universally supported
+            const el = document.createElement('textarea');
+            el.value = text;
+            el.style.position = 'fixed';
+            el.style.opacity = '0';
+            document.body.appendChild(el);
+            el.select();
+            document.execCommand('copy');
+            document.body.removeChild(el);
+        }
         setCopied(true);
         setTimeout(() => setCopied(false), 2000);
     }

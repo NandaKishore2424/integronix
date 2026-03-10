@@ -1,6 +1,6 @@
 'use client';
 
-import { CodeResponse } from '@/types/coding';
+import { CodeResponse, MappingPath } from '@/types/coding';
 import { formatCurrency } from '@/lib/api';
 import IcdCodeCard from './IcdCodeCard';
 import MultiCodeList from './MultiCodeList';
@@ -15,10 +15,15 @@ interface Props {
     onReanalyze: () => void;
 }
 
-const RESOLUTION_LABELS: Record<string, { label: string; color: string }> = {
+// FIX FE-BUG-002: All 6 MappingPath values covered. Using Record<MappingPath, ...>
+// gives TypeScript exhaustiveness — compiler errors if a new path is added without a label.
+const RESOLUTION_LABELS: Record<MappingPath, { label: string; color: string }> = {
     direct: { label: 'High Confidence', color: 'text-success' },
     embedding: { label: 'Semantic Match', color: 'text-warning' },
     no_mapping: { label: 'Low Confidence', color: 'text-slate-400' },
+    no_snomed: { label: 'Ontology Gap', color: 'text-orange-400' },
+    embedding_failed: { label: 'Pipeline Error', color: 'text-danger' },
+    unknown: { label: 'Unresolved', color: 'text-slate-500' },
 };
 
 export default function ResultsPanel({ result, onReanalyze }: Props) {

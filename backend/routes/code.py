@@ -18,9 +18,9 @@ Phase 5A additions:
 """
 import uuid
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
 from typing import Optional, List
 from agents.graph import build_integronix_graph, CodingState
+from models import CodeRequest, CodeResponse
 from logger import get_logger
 
 log = get_logger(__name__)
@@ -36,35 +36,6 @@ def _get_graph():
         _graph = build_integronix_graph()
     return _graph
 
-
-# ── Request / Response models ──────────────────────────────────────────────────
-
-class CodeRequest(BaseModel):
-    raw_text: str
-    session_id: Optional[str] = None
-    human_icd_code: Optional[str] = None
-
-
-class CodeResponse(BaseModel):
-    session_id:           str
-    final_icd_code:       str
-    confidence_score:     float
-    mapping_path:         str
-    resolved_snomed_code: Optional[str]
-    # Single-code (backward compat)
-    candidates:           list
-    # Phase 5A: Multi-code list
-    icd_codes:            List[dict]
-    discrepancy_type:     Optional[str]
-    discrepancy:          Optional[dict]
-    financial_delta:      Optional[float]
-    drg_flag:             Optional[str]        # MCC_MISSED | CC_MISSED | MCC_OVERCODED | null
-    risk_score:           float
-    risk_label:           str
-    extraction_metadata:  dict
-    # Phase 5A: FHIR R4 enterprise signal
-    fhir_condition:       Optional[dict]
-    error_at:             Optional[str] = None
 
 
 # ── FHIR builder ───────────────────────────────────────────────────────────────
