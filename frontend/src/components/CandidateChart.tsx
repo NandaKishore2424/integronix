@@ -38,7 +38,8 @@ export default function CandidateChart({ candidates }: Props) {
         .sort((a, b) => b.final_score - a.final_score)
         .slice(0, 6);
 
-    const maxScore = data[0]?.final_score ?? 1;
+    // maxScore removed — Recharts XAxis domain={[0, 1]} handles scaling
+
 
     return (
         <div className="glass-card p-6 flex flex-col gap-4">

@@ -1,84 +1,68 @@
 """
-agents/graph.py — LangGraph full pipeline: Nodes 1-8 (including Node 5 embedding fallback).
-
-Flow:
-  doc_processing → clinical_extract → snomed_resolve → snomed_icd_map
-  → [conditional] → if direct: icd_decision
-                  → if no_mapping: icd_embedding → icd_decision
-  → audit_comparison → risk_scoring → END
+This file defines the heart of our application: the LangGraph pipeline.
+It connects all the individual agents (nodes) into a coherent workflow,
+managing the flow of data from one step to the next. It also includes
+the conditional logic that decides which path to take based on the data.
 """
 from typing import TypedDict, Optional, List
 
 
 class CodingState(TypedDict, total=False):
-    """Shared state object flowing through all LangGraph nodes."""
-    # Identity
+    # This is the shared memory or "state" that gets passed between all the
+    # nodes in our graph. Each agent reads from and writes to this object.
+    # Think of it as the patient's chart that gets updated at each station.
+
+    # --- Input Data ---
     session_id: str
     pdf_bytes: Optional[bytes]
+    human_icd_code: Optional[str] # The code entered by a human for comparison
 
-    # Node 1 output
-    raw_text: str
-
-    # Node 2 output
-    structured_entities: dict
-    extraction_metadata: dict       # model, llm_version, tokens
-
-    # Node 3 output
-    resolved_snomed_code: Optional[str]
+    # --- Pipeline Data ---
+    raw_text: str                   # Output from Node 1
+    structured_entities: dict       # Output from Node 2 (the LLM)
+    extraction_metadata: dict       # Info about the LLM call
+    resolved_snomed_code: Optional[str] # Output from Node 3
     resolved_snomed_desc: Optional[str]
-    snomed_resolution_method: str   # llm_suggested | text_matched | not_found
-
-    # Node 4 output
-    direct_mapped_icd: Optional[str]
-    mapping_path: str               # direct | no_mapping | no_snomed | embedding | embedding_failed
+    snomed_resolution_method: str
+    direct_mapped_icd: Optional[str]    # Output from Node 4
+    mapping_path: str
     candidate_icd_codes: List[dict]
-
-    # Node 6 output
-    final_icd_code: str
+    final_icd_code: str             # Output from Node 6 (the final decision)
     confidence_score: float
-    icd_codes: List[dict]           # Multi-code list: primary + secondary + additional
+    icd_codes: List[dict]
 
-    # Node 7 input/output
-    human_icd_code: Optional[str]
-    discrepancy_type: Optional[str]
+    # --- Audit & Risk Analysis ---
+    discrepancy_type: Optional[str] # Output from Node 7
     discrepancy: Optional[dict]
     financial_delta: Optional[float]
-    drg_flag: Optional[str]         # e.g. "MCC_MISSED" | "CC_MISSED" | None
+    drg_flag: Optional[str]
+    risk_score: float               # Output from Node 8
+    risk_label: str
 
-    # Node 8 output
-    risk_score: float
-    risk_label: str                 # LOW | MEDIUM | HIGH
+    # --- Final Outputs ---
+    fhir_condition: Optional[dict]  # A standardized FHIR representation
 
-    # FHIR output (cosmetic — enterprise signal)
-    fhir_condition: Optional[dict]
-
-    # Error tracing (set by @safe_node on failure)
-    error_at: Optional[str]
-    error_detail: Optional[str]
+    # --- Error Handling ---
+    error_at: Optional[str]         # If a node fails, its name goes here
+    error_detail: Optional[str]     # The error message
 
 
 def _route_after_mapping(state: CodingState) -> str:
-    """
-    Conditional router after Node 4 (snomed_icd_map).
-    If direct mapping found → go straight to deterministic ICD decision.
-    If no mapping found    → go to embedding fallback (Node 5).
-    """
+    # This is a conditional router. After we try to map SNOMED to ICD-10,
+    # this function decides where to go next.
     path = state.get("mapping_path", "no_mapping")
     has_candidates = bool(state.get("candidate_icd_codes"))
 
+    # If we found a direct, official mapping, we can go straight to the final decision.
     if path == "direct" and has_candidates:
         return "icd_decision"
+    # Otherwise, we need to use our backup plan: vector search.
     return "icd_embedding"
 
 
 def build_integronix_graph():
-    """
-    Builds and compiles the full LangGraph pipeline — all 8 nodes.
-
-    Node 5 (embedding fallback) triggered via conditional edge:
-      - mapping_path == "direct"    → skip Node 5, go directly to Node 6
-      - mapping_path == "no_mapping" → go to Node 5, then Node 6
-    """
+    # This function constructs the entire agent pipeline using LangGraph.
+    # It defines all the nodes and the connections (edges) between them.
     from langgraph.graph import StateGraph, END
     from agents.doc_processor       import doc_processing_node
     from agents.clinical_extractor  import clinical_extraction_agent
@@ -91,13 +75,13 @@ def build_integronix_graph():
 
     graph = StateGraph(CodingState)
 
-    # ── Register all nodes ────────────────────────────────────────────────
+    # First, we register each of our agent functions as a node in the graph.
     graph.add_node("doc_processing",   doc_processing_node)
     graph.add_node("clinical_extract", clinical_extraction_agent)
     graph.add_node("snomed_resolve",   snomed_resolver_node)
     graph.add_node("snomed_icd_map",   snomed_icd_mapping_node)
-    graph.add_node("icd_embedding",    icd_embedding_node)   # Node 5
-    graph.add_node("icd_decision",     icd_decision_node)    # Node 6
+    graph.add_node("icd_embedding",    icd_embedding_node)   # Fallback: vector search
+    graph.add_node("icd_decision",     icd_decision_node)    # Deterministic rule engine
     graph.add_node("audit_comparison", audit_comparison_node)
     graph.add_node("risk_scoring",     risk_scoring_node)
 

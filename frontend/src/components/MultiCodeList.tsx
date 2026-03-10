@@ -96,12 +96,24 @@ export default function MultiCodeList({ codes }: Props) {
                 })}
             </div>
 
-            {/* Total reimbursement */}
-            <div className="border-t border-white/[0.06] pt-3 flex justify-between items-center">
-                <span className="text-xs text-slate-500">Combined Estimated Reimbursement</span>
-                <span className="text-sm font-bold text-success">
-                    ${codes.reduce((s, c) => s + c.base_reimbursement, 0).toLocaleString()}
-                </span>
+            {/* FIX FE-BUG-009: Show primary code reimbursement only.
+                Summing all codes is clinically misleading — DRG reimbursement
+                is determined by the principal diagnosis grouping, not additive per code. */}
+            <div className="border-t border-white/[0.06] pt-3 flex justify-between items-center gap-3 flex-wrap">
+                <div>
+                    <span className="text-xs text-slate-500">Estimated Reimbursement</span>
+                    <span className="text-xs text-slate-600 ml-1">(primary DRG rate)</span>
+                </div>
+                <div className="text-right">
+                    <span className="text-sm font-bold text-success">
+                        ${(codes.find(c => c.role === 'primary')?.base_reimbursement ?? 0).toLocaleString()}
+                    </span>
+                    {codes.length > 1 && (
+                        <p className="text-[10px] text-slate-600 mt-0.5">
+                            +{codes.length - 1} additional code{codes.length > 2 ? 's' : ''} affect DRG weight
+                        </p>
+                    )}
+                </div>
             </div>
         </div>
     );

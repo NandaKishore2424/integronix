@@ -1,18 +1,8 @@
 """
-agents/icd_embedding.py — Node 5: ICD Embedding Fallback
-
-Triggered only when Node 4 returns mapping_path = "no_mapping".
-Uses sentence-transformers to embed diagnosis text, then queries
-Supabase pgvector for similar ICD codes.
-
-GUARDRAILS:
-  - Cosine similarity threshold > 0.70 (no weak matches)
-  - Filter: only billable codes
-  - Chapter exclusion: reject codes from clearly unrelated chapters
-  - Never overrides a confirmed direct mapping
-
-Node 6 still runs deterministic scoring on these candidates.
-Embedding NEVER directly picks the final code.
+This agent is our fallback plan. It's triggered only when a direct, official
+mapping from SNOMED to ICD-10 can't be found. It uses vector embeddings to
+find ICD-10 codes that are semantically similar to the clinical text.
+This ensures we can always suggest a code, even for complex cases.
 """
 from __future__ import annotations
 from agents.graph import CodingState
@@ -22,10 +12,11 @@ from logger import get_logger
 
 log = get_logger(__name__)
 
-SIMILARITY_THRESHOLD = 0.55   # Lowered from 0.70 — clinical paraphrasing reduces similarity
-EMBEDDING_TOP_K = 5
+SIMILARITY_THRESHOLD = 0.55   # We need a minimum similarity to consider a match.
+EMBEDDING_TOP_K = 5           # We'll only consider the top 5 most similar codes.
 
-# Chapter exclusion map — if primary diagnosis is endocrine, reject mental health codes etc.
+# This map helps us avoid suggesting codes from completely unrelated medical specialties.
+# For example, if the diagnosis is about diabetes, we shouldn't suggest a code for a mental disorder.
 UNRELATED_CHAPTER_PAIRS = {
     "Endocrine":     {"Mental", "Neuro"},
     "Mental":        {"Endocrine", "Infectious"},
@@ -38,7 +29,8 @@ _embedding_model = None
 
 
 def _get_model():
-    """Lazy-load sentence-transformers model (downloads once, cached)."""
+    # We lazy-load the embedding model so it's only loaded into memory when needed.
+    # The first time this is called, it will download the model (if necessary).
     global _embedding_model
     if _embedding_model is None:
         try:
@@ -53,23 +45,21 @@ def _get_model():
 
 
 def _embed_text(text: str) -> list[float]:
-    """Generate 384-dim embedding for clinical text."""
+    # This function takes a string of text and turns it into a 384-dimension vector.
     model = _get_model()
     vector = model.encode(text, normalize_embeddings=True)
     return vector.tolist()
 
 
 def _vector_to_pg_literal(vector: list[float]) -> str:
-    """
-    Convert Python list to Postgres vector literal string.
-    PostgREST RPC with pgvector requires: "[0.1, 0.2, ...]" (string)
-    NOT a JSON array [0.1, 0.2, ...] (Python list).
-    """
+    # A helper function to format the vector into the string format that
+    # our PostgreSQL database (pgvector) expects.
     return "[" + ",".join(f"{v:.8f}" for v in vector) + "]"
 
 
 def _infer_chapter_from_diagnoses(entities: dict) -> str | None:
-    """Roughly infer the chapter context from diagnosis text keywords."""
+    # A simple heuristic to guess the relevant medical chapter from the diagnosis text.
+    # This helps us filter out irrelevant search results later.
     text = " ".join(
         d.get("text", "").lower() for d in entities.get("diagnoses", [])
     )
@@ -92,11 +82,8 @@ def _infer_chapter_from_diagnoses(entities: dict) -> str | None:
 
 @safe_node("icd_embedding")
 async def icd_embedding_node(state: CodingState) -> CodingState:
-    """
-    LangGraph Node 5 — ICD Embedding Fallback.
-    Input:  state["structured_entities"], state["mapping_path"] == "no_mapping"
-    Output: state["candidate_icd_codes"], state["mapping_path"] = "embedding"
-    """
+    # This is the main function for the embedding node. It's only called
+    # when the previous node couldn't find a direct mapping.
     session_id = str(state.get("session_id", ""))
     entities   = state.get("structured_entities") or {}
     diagnoses  = entities.get("diagnoses", [])

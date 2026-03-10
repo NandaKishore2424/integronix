@@ -452,7 +452,7 @@ IntegronixError
 
 | File | Description |
 |---|---|
-| `001_enable_extensions.sql` | Enable pgvector + uuid-ossp |
+| `001_extensions.sql` | Enable pgvector + uuid-ossp |
 | `002_create_icd_codes.sql` | ICD codes table with VECTOR(384) |
 | `003_create_snomed_tables.sql` | snomed_concepts + snomed_icd_map |
 | `004_create_clinical_cases.sql` | clinical_cases table |
@@ -462,6 +462,15 @@ IntegronixError
 | `008_seed_data.sql` | Initial 10 ICD codes + 5 SNOMED concepts + 6 mappings |
 | `009_expanded_seed.sql` | 60+ ICD codes across 9 chapters + 12 SNOMED concepts |
 | `010_vector_search_rpc.sql` | `match_icd_codes()` + `match_snomed_concepts()` pgvector RPC |
+| `011_create_organizations.sql` | Organizations table — top-level tenant entity |
+| `012_create_branches.sql` | Branches table — dept/wing sub-units of an org |
+| `013_create_users.sql` | Users table — role-based (`admin`/`auditor`/`coder`) with branch scoping |
+| `014_add_tenant_columns.sql` | Adds `organization_id` + `branch_id` FK to `clinical_cases` + `coding_results` |
+| `015_row_level_security.sql` | RLS policies on all 3 data tables — org isolation via JWT-based `current_user_org_id()` |
+| `016_seed_demo_org.sql` | Demo org (City General Hospital), 3 branches, 4 demo users |
+| `017_add_auth_id_to_users.sql` | Links `public.users` to `auth.users` via `auth_id UUID REFERENCES auth.users(id)` |
+
+> See `docs/24_auth_roles_and_setup.md` for the full multi-tenancy reference including roles, demo user accounts, and RLS design.
 
 ---
 

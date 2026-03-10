@@ -104,8 +104,35 @@ class CodingResult(BaseModel):
     error_detail: Optional[str] = None
 
 
-# ── Request Schemas ───────────────────────────────────────────────────────────
+# ── Request / Response Schemas ─────────────────────────────────────────────────
 
 class AuditRequest(BaseModel):
     session_id: str
     human_icd_code: str
+
+
+class CodeRequest(BaseModel):
+    """Request body for POST /api/v1/code/run"""
+    raw_text: str
+    session_id: Optional[str] = None
+    human_icd_code: Optional[str] = None
+
+
+class CodeResponse(BaseModel):
+    """Response from POST /api/v1/code/run"""
+    session_id:           str
+    final_icd_code:       str
+    confidence_score:     float
+    mapping_path:         str
+    resolved_snomed_code: Optional[str] = None
+    candidates:           list = []
+    icd_codes:            List[dict] = []
+    discrepancy_type:     Optional[str] = None
+    discrepancy:          Optional[dict] = None
+    financial_delta:      Optional[float] = None
+    drg_flag:             Optional[str] = None
+    risk_score:           float
+    risk_label:           str
+    extraction_metadata:  dict = {}
+    fhir_condition:       Optional[dict] = None
+    error_at:             Optional[str] = None
