@@ -1,8 +1,11 @@
 """
-routes/code.py — Full Pipeline Endpoint: POST /code/run
+routes/code.py — Full Pipeline Endpoints
+
+  POST /code/run      → accepts JSON body (raw_text)
+  POST /code/run-pdf  → accepts multipart/form-data (PDF file)
 
 8-node LangGraph pipeline:
-  Node 1: doc_processing    → raw_text pass-through
+  Node 1: doc_processing    → raw_text (from text or PDF bytes)
   Node 2: clinical_extract  → structured_entities via Groq LLM
   Node 3: snomed_resolve    → SNOMED concept resolution
   Node 4: snomed_icd_map    → SNOMED→ICD direct mapping
@@ -10,14 +13,9 @@ routes/code.py — Full Pipeline Endpoint: POST /code/run
   Node 6: icd_decision      → deterministic ICD selection + multi-code list
   Node 7: audit_comparison  → human vs AI comparison + DRG flag
   Node 8: risk_scoring      → risk label + DB writes
-
-Phase 5A additions:
-  - icd_codes: multi-code list (primary + secondary + additional)
-  - drg_flag: MCC/CC gap signal
-  - fhir_condition: FHIR R4 Condition resource (enterprise signal)
 """
 import uuid
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, UploadFile, File, Form
 from typing import Optional, List
 from agents.graph import build_integronix_graph, CodingState
 from models import CodeRequest, CodeResponse
@@ -26,6 +24,8 @@ from logger import get_logger
 log = get_logger(__name__)
 
 router = APIRouter(prefix="/code", tags=["ICD Coding Pipeline"])
+
+MAX_PDF_SIZE = 20 * 1024 * 1024  # 20 MB
 
 _graph = None
 
@@ -99,45 +99,8 @@ def _build_fhir_condition(icd_codes: list, session_id: str) -> dict:
 
 # ── Endpoint ───────────────────────────────────────────────────────────────────
 
-@router.post(
-    "/run",
-    response_model=CodeResponse,
-    summary="Run full ICD coding pipeline on raw clinical text",
-)
-async def run_full_pipeline(body: CodeRequest):
-    """
-    Full 8-node LangGraph pipeline.
-
-    Returns:
-    - final_icd_code: primary AI-selected ICD-10 code
-    - icd_codes: ranked list (primary, secondary, additional) with rationale
-    - fhir_condition: FHIR R4 Condition resource
-    - drg_flag: DRG weight gap signal (MCC_MISSED, CC_MISSED, etc.)
-    - discrepancy: audit comparison vs human code
-    - risk_label: LOW / MEDIUM / HIGH
-    """
-    if not body.raw_text or len(body.raw_text.strip()) < 20:
-        raise HTTPException(
-            status_code=400,
-            detail="raw_text must be at least 20 characters.",
-        )
-
-    session_id = body.session_id or str(uuid.uuid4())
-
-    initial_state: CodingState = {
-        "session_id":     session_id,
-        "raw_text":       body.raw_text.strip(),
-        "human_icd_code": body.human_icd_code,
-        "pdf_bytes":      None,
-    }
-
-    log.info(
-        "pipeline_started",
-        session_id=session_id,
-        text_length=len(body.raw_text),
-        has_human_code=bool(body.human_icd_code),
-    )
-
+async def _run_pipeline(initial_state: CodingState, session_id: str) -> CodeResponse:
+    """Shared pipeline runner used by both /run and /run-pdf endpoints."""
     try:
         graph  = _get_graph()
         result = await graph.ainvoke(
@@ -170,4 +133,98 @@ async def run_full_pipeline(body: CodeRequest):
         extraction_metadata=result.get("extraction_metadata") or {},
         fhir_condition=_build_fhir_condition(icd_codes, session_id),
         error_at=result.get("error_at"),
+        document_source=result.get("document_source", "text_input"),
+        ocr_used=result.get("ocr_used", False),
     )
+
+
+@router.post(
+    "/run",
+    response_model=CodeResponse,
+    summary="Run full ICD coding pipeline on raw clinical text",
+)
+async def run_full_pipeline(body: CodeRequest):
+    """
+    Full 8-node LangGraph pipeline — accepts raw clinical text (JSON).
+    """
+    if not body.raw_text or len(body.raw_text.strip()) < 20:
+        raise HTTPException(
+            status_code=400,
+            detail="raw_text must be at least 20 characters.",
+        )
+
+    session_id = body.session_id or str(uuid.uuid4())
+
+    initial_state: CodingState = {
+        "session_id":     session_id,
+        "raw_text":       body.raw_text.strip(),
+        "human_icd_code": body.human_icd_code,
+        "pdf_bytes":      None,
+    }
+
+    log.info(
+        "pipeline_started",
+        session_id=session_id,
+        source="text",
+        text_length=len(body.raw_text),
+        has_human_code=bool(body.human_icd_code),
+    )
+
+    return await _run_pipeline(initial_state, session_id)
+
+
+@router.post(
+    "/run-pdf",
+    response_model=CodeResponse,
+    summary="Run full ICD coding pipeline on an uploaded PDF (discharge summary, SOAP, etc.)",
+)
+async def run_pdf_pipeline(
+    file: UploadFile = File(..., description="PDF file — discharge summary, H&P, or progress notes"),
+    human_icd_code: Optional[str] = Form(None, description="Existing ICD-10 code for audit comparison"),
+    session_id: Optional[str] = Form(None),
+):
+    """
+    Full 8-node LangGraph pipeline — accepts a PDF file via multipart/form-data.
+
+    The PDF is read as bytes and passed to Node 1 (doc_processing) which:
+      - Tries pdfplumber first (digital PDFs)
+      - Falls back to Tesseract OCR (scanned/image PDFs)
+    The rest of the pipeline is identical to /run.
+    """
+    # ── Validate file type ────────────────────────────────────────────────────
+    content_type = file.content_type or ""
+    if "pdf" not in content_type and not (file.filename or "").lower().endswith(".pdf"):
+        raise HTTPException(
+            status_code=400,
+            detail="Only PDF files are accepted. Please upload a .pdf file.",
+        )
+
+    # ── Read bytes & enforce size limit ───────────────────────────────────────
+    pdf_bytes = await file.read()
+    if len(pdf_bytes) > MAX_PDF_SIZE:
+        raise HTTPException(
+            status_code=413,
+            detail=f"PDF too large. Maximum allowed size is 20 MB (got {len(pdf_bytes) // 1024 // 1024} MB).",
+        )
+    if len(pdf_bytes) == 0:
+        raise HTTPException(status_code=400, detail="Uploaded PDF file is empty.")
+
+    session_id = session_id or str(uuid.uuid4())
+
+    initial_state: CodingState = {
+        "session_id":     session_id,
+        "pdf_bytes":      pdf_bytes,
+        "raw_text":       "",           # Node 1 will populate this from PDF
+        "human_icd_code": human_icd_code.strip().upper() if human_icd_code else None,
+    }
+
+    log.info(
+        "pipeline_started",
+        session_id=session_id,
+        source="pdf",
+        filename=file.filename,
+        size_bytes=len(pdf_bytes),
+        has_human_code=bool(human_icd_code),
+    )
+
+    return await _run_pipeline(initial_state, session_id)

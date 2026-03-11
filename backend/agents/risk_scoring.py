@@ -90,27 +90,57 @@ async def risk_scoring_node(state: CodingState) -> CodingState:
         confidence_score=state.get("confidence_score"),
     )
 
-    # ── Write clinical_cases row ────────────────────────────────────────────
+    # ── Prepare reusable values ─────────────────────────────────────────────────
+    raw_text = state.get("raw_text") or ""
+    raw_text_snippet = raw_text[:300].strip() if raw_text else None
+
+    document_source  = state.get("document_source", "text_input")
+    ocr_used         = state.get("ocr_used", False)
+    icd_codes_full   = state.get("icd_codes", [])
+    drg_flag         = state.get("drg_flag")
+    discrepancy      = state.get("discrepancy") or {}
+
+    # ── Write clinical_cases row ────────────────────────────────────────────────
+    case_id = None
     try:
-        await insert("clinical_cases", {
+        row = await insert("clinical_cases", {
             "session_id":           session_id,
+            "raw_text":             raw_text or None,
+            "raw_text_snippet":     raw_text_snippet,
             "structured_entities":  state.get("structured_entities"),
             "processing_status":    "COMPLETE",
             "completed_at":         datetime.now(timezone.utc).isoformat(),
+            "document_source":      document_source,
+            "ocr_used":             ocr_used,
         })
+        if row:
+            case_id = row.get("case_id")
     except Exception as e:
         log.warning("clinical_cases_write_failed", session_id=session_id, error=str(e))
 
-    # ── Write coding_results row ────────────────────────────────────────────
-    discrepancy = state.get("discrepancy") or {}
+    # If insert didn't return the row, try reading it back by session_id
+    if not case_id:
+        try:
+            existing = await select_one(
+                "clinical_cases",
+                query="case_id",
+                filters={"session_id": f"eq.{session_id}"},
+            )
+            if existing:
+                case_id = existing.get("case_id")
+        except Exception:
+            pass
+
+    # ── Write coding_results row ────────────────────────────────────────────────
     try:
         await insert("coding_results", {
-            "case_id":              None,   # Set after case_id lookup if needed
+            "case_id":              case_id,         # FK → clinical_cases (may be None if write failed)
             "resolved_snomed_code": state.get("resolved_snomed_code"),
             "mapping_path":         state.get("mapping_path"),
             "ai_icd_code":          state.get("final_icd_code"),
-            "confidence_score":     state.get("confidence_score", 0.0),   # FIX: was storing risk_score here
+            "confidence_score":     state.get("confidence_score", 0.0),
             "candidate_codes":      state.get("candidate_icd_codes", []),
+            "icd_codes_full":       icd_codes_full,  # Full ranked list (Phase 6B)
             "human_icd_code":       state.get("human_icd_code"),
             "discrepancy_type":     state.get("discrepancy_type", "NO_COMPARISON"),
             "evidence_text":        (state.get("structured_entities") or {})
@@ -119,12 +149,13 @@ async def risk_scoring_node(state: CodingState) -> CodingState:
             "financial_delta":      state.get("financial_delta", 0.0),
             "risk_score":           risk_score,
             "risk_label":           risk_label,
+            "drg_flag":             drg_flag,        # DRG gap signal (Phase 6B)
             "audit_result_json":    discrepancy,
         })
     except Exception as e:
         log.warning("coding_results_write_failed", session_id=session_id, error=str(e))
 
-    # ── Write audit_log entry for this final node ───────────────────────────
+    # ── Write audit_log entry for this final node ───────────────────────────────
     metadata = state.get("extraction_metadata") or {}
     try:
         await insert("audit_log", {
@@ -132,13 +163,14 @@ async def risk_scoring_node(state: CodingState) -> CodingState:
             "node_name":    "risk_scoring",
             "output_snapshot": {
                 "final_icd_code":   state.get("final_icd_code"),
-                "icd_codes":        state.get("icd_codes", []),
+                "icd_codes":        icd_codes_full,
                 "confidence_score": state.get("confidence_score"),
                 "risk_score":       risk_score,
                 "risk_label":       risk_label,
                 "discrepancy_type": state.get("discrepancy_type"),
                 "financial_delta":  state.get("financial_delta"),
-                "drg_flag":         state.get("drg_flag"),
+                "drg_flag":         drg_flag,
+                "document_source":  document_source,
             },
             "model_name":     metadata.get("model"),
             "model_version":  metadata.get("llm_version"),

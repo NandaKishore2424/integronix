@@ -17,6 +17,8 @@ async def doc_processing_node(state: CodingState) -> CodingState:
     # If the text is already here, we don't need to do anything.
     # This happens when a user pastes text directly into the application.
     if state.get("raw_text"):
+        state.setdefault("document_source", "text_input")
+        state.setdefault("ocr_used", False)
         return state
 
     # If we have a PDF, we'll use our PDF service to extract the text.
@@ -28,8 +30,10 @@ async def doc_processing_node(state: CodingState) -> CodingState:
             "Set one before invoking the graph."
         )
 
-    # Extract the text and add it to our main state object.
-    raw_text = extract_text_from_pdf(pdf_bytes)
+    # Extract the text — returns (text, ocr_used) tuple
+    raw_text, ocr_used = extract_text_from_pdf(pdf_bytes)
     state["raw_text"] = raw_text
+    state["document_source"] = "pdf_upload"
+    state["ocr_used"] = ocr_used
     return state
 

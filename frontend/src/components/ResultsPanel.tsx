@@ -8,7 +8,7 @@ import AuditCard from './AuditCard';
 import CandidateChart from './CandidateChart';
 import RiskMeter from './RiskMeter';
 import FhirPanel from './FhirPanel';
-import { RotateCcw, ShieldCheck, AlertCircle } from 'lucide-react';
+import { RotateCcw, ShieldCheck, AlertCircle, FileText, ScanText } from 'lucide-react';
 
 interface Props {
     result: CodeResponse;
@@ -58,6 +58,26 @@ export default function ResultsPanel({ result, onReanalyze }: Props) {
                         {delta !== 0 ? formatCurrency(delta) : '—'}
                     </span>
                 </div>
+                {/* Document source badge — shown only for PDF uploads (Phase 6A) */}
+                {result.document_source === 'pdf_upload' && (
+                    <>
+                        <div className="w-px h-8 bg-white/10 hidden sm:block" />
+                        <div className="flex flex-col gap-0.5 hidden sm:flex">
+                            <span className="mono-label">Source</span>
+                            {result.ocr_used ? (
+                                <span className="flex items-center gap-1 text-xs font-mono text-amber-400">
+                                    <ScanText className="w-3 h-3" />
+                                    OCR Extracted
+                                </span>
+                            ) : (
+                                <span className="flex items-center gap-1 text-xs font-mono text-slate-300">
+                                    <FileText className="w-3 h-3" />
+                                    Digital PDF
+                                </span>
+                            )}
+                        </div>
+                    </>
+                )}
                 <div className="ml-auto">
                     <button
                         onClick={onReanalyze}

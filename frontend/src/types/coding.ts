@@ -1,4 +1,4 @@
-// types/coding.ts — TypeScript interfaces matching backend CodeResponse (Phase 5A)
+// types/coding.ts — TypeScript interfaces matching backend CodeResponse (Phase 6A)
 
 export interface IcdCode {
     code: string;
@@ -89,6 +89,9 @@ export interface CodeResponse {
     extraction_metadata: ExtractionMetadata;
     fhir_condition: FhirCondition | null;
     error_at: string | null;
+    // Phase 6A — PDF upload
+    document_source: 'text_input' | 'pdf_upload' | null;
+    ocr_used: boolean | null;
 }
 
 export interface PipelineRequest {
