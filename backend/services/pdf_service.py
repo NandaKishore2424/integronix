@@ -6,11 +6,13 @@ import io
 import pdfplumber
 
 
-def extract_text_from_pdf(file_bytes: bytes) -> str:
+def extract_text_from_pdf(file_bytes: bytes) -> tuple[str, bool]:
     """
     Extract text from PDF bytes.
-    Returns the raw extracted text string.
-    Raises ValueError if extraction yields no text.
+    Returns (text, ocr_used):
+      - ocr_used=False when pdfplumber succeeds on a digital PDF
+      - ocr_used=True  when Tesseract OCR fallback was needed (scanned PDF)
+    Raises ValueError if no text could be extracted at all.
     """
     text_pages = []
 
@@ -22,20 +24,23 @@ def extract_text_from_pdf(file_bytes: bytes) -> str:
 
     extracted = "\n\n".join(text_pages).strip()
 
-    # If pdfplumber got nothing, it's likely a scanned PDF
+    # If pdfplumber got nothing, it's likely a scanned PDF — try OCR
     if not extracted:
         extracted = _ocr_fallback(file_bytes)
+        if not extracted:
+            raise ValueError(
+                "Could not extract any text from the PDF. "
+                "File may be corrupted or image-only without readable text."
+            )
+        return extracted, True   # OCR was used
 
-    if not extracted:
-        raise ValueError("Could not extract any text from the PDF. File may be corrupted or image-only.")
-
-    return extracted
+    return extracted, False      # Digital PDF — no OCR needed
 
 
 def _ocr_fallback(file_bytes: bytes) -> str:
     """
     OCR fallback using pytesseract for scanned PDFs.
-    Requires tesseract-ocr installed on the system.
+    Requires: tesseract-ocr + poppler installed on the system.
     """
     try:
         import pytesseract

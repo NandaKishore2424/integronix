@@ -17,6 +17,10 @@ class CodingState(TypedDict, total=False):
     pdf_bytes: Optional[bytes]
     human_icd_code: Optional[str] # The code entered by a human for comparison
 
+    # --- Document metadata (set by Node 1) ---
+    document_source: Optional[str]  # "text_input" | "pdf_upload"
+    ocr_used: Optional[bool]        # True if Tesseract OCR fallback was triggered
+
     # --- Pipeline Data ---
     raw_text: str                   # Output from Node 1
     structured_entities: dict       # Output from Node 2 (the LLM)

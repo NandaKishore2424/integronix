@@ -3,13 +3,15 @@
 import { useEffect } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
 import Link from 'next/link';
-import { BarChart3, Activity, GitBranch, Users, LogOut, ChevronRight, Shield } from 'lucide-react';
+import { BarChart3, Activity, GitBranch, Users, LogOut, ChevronRight, Shield, Clock } from 'lucide-react';
 import { useAuth } from '@/components/AuthProvider';
 
 const navItems = [
-    { href: '/dashboard/analyze', icon: Activity, label: 'Analyse' },
-    { href: '/dashboard/branches', icon: GitBranch, label: 'Branches', adminOnly: true },
-    { href: '/dashboard/users', icon: Users, label: 'Users', adminOnly: true },
+    { href: '/dashboard/analyze',   icon: Activity,   label: 'Analyse' },
+    { href: '/dashboard/cases',     icon: Clock,      label: 'Case History' },
+    { href: '/dashboard/analytics', icon: BarChart3,  label: 'Analytics' },
+    { href: '/dashboard/branches',  icon: GitBranch,  label: 'Branches', adminOnly: true },
+    { href: '/dashboard/users',     icon: Users,      label: 'Users', adminOnly: true },
 ];
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {

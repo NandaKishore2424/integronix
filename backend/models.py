@@ -119,7 +119,7 @@ class CodeRequest(BaseModel):
 
 
 class CodeResponse(BaseModel):
-    """Response from POST /api/v1/code/run"""
+    """Response from POST /api/v1/code/run or /api/v1/code/run-pdf"""
     session_id:           str
     final_icd_code:       str
     confidence_score:     float
@@ -136,3 +136,77 @@ class CodeResponse(BaseModel):
     extraction_metadata:  dict = {}
     fhir_condition:       Optional[dict] = None
     error_at:             Optional[str] = None
+    # Document source tracking (Phase 6A)
+    document_source:      Optional[str] = None  # "text_input" | "pdf_upload"
+    ocr_used:             Optional[bool] = None
+
+
+# ── Phase 6B: Case History models ─────────────────────────────────────────────
+
+class CaseSummary(BaseModel):
+    """One row in the Case History table."""
+    result_id:        str
+    session_id:       str
+    ai_icd_code:      Optional[str] = None
+    human_icd_code:   Optional[str] = None
+    discrepancy_type: Optional[str] = None
+    financial_delta:  Optional[float] = None
+    risk_score:       float
+    risk_label:       str
+    confidence_score: float
+    drg_flag:         Optional[str] = None
+    document_source:  Optional[str] = None
+    ocr_used:         Optional[bool] = None
+    text_snippet:     Optional[str] = None   # First 300 chars of clinical text
+    created_at:       str
+
+
+class CaseListResponse(BaseModel):
+    """Paginated list of case summaries."""
+    cases:       List[CaseSummary]
+    total:       int
+    page:        int
+    page_size:   int
+    total_pages: int
+
+
+class CaseStatsResponse(BaseModel):
+    """Aggregate KPIs for the Cases page header cards."""
+    total_cases:              int
+    total_revenue_recovered:  float
+    high_risk_count:          int
+    accuracy_rate:            float   # Percentage 0-100
+
+
+# ── Phase 6C: Analytics Dashboard models ────────────────────────────────────
+
+class TrendPoint(BaseModel):
+    """One day in the 30-day trend series."""
+    date:    str    # YYYY-MM-DD
+    cases:   int
+    revenue: float
+
+
+class AnalyticsOverview(BaseModel):
+    """Top-level analytics payload for the /analytics/overview endpoint."""
+    total_cases:              int
+    total_revenue_recovered:  float
+    avg_confidence:           float   # 0-100
+    high_risk_rate:           float   # 0-100
+    risk_distribution:        dict    # {LOW: n, MEDIUM: n, HIGH: n}
+    source_distribution:      dict    # {text_input: n, pdf_upload: n}
+    trend:                    List[TrendPoint]
+
+
+class TopCodeItem(BaseModel):
+    """One row in the Top Codes table."""
+    code:            str
+    count:           int
+    avg_revenue:     float
+    avg_risk:        float
+    top_discrepancy: str
+
+
+class AnalyticsTopCodes(BaseModel):
+    """Top 10 ICD codes by frequency."""
+    codes: List[TopCodeItem]

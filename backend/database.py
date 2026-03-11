@@ -93,3 +93,68 @@ async def insert(table: str, data: dict) -> dict | None:
         table=table,
         status=response.status_code,
     )
+async def select_paginated(
+    table: str,
+    query: str = "*",
+    filters: dict | None = None,
+    order: str | None = None,
+    page: int = 1,
+    page_size: int = 20,
+) -> tuple[list[dict], int]:
+    """
+    Paginated SELECT using PostgREST Range header.
+    Returns (rows, total_count).
+    """
+    client = await get_client()
+    params: dict = {"select": query}
+    if filters:
+        params.update(filters)
+    if order:
+        params["order"] = order
+
+    offset = (page - 1) * page_size
+    range_header = f"{offset}-{offset + page_size - 1}"
+
+    response = await client.get(
+        f"/{table}",
+        params=params,
+        headers={
+            **_headers(),
+            "Range": range_header,
+            "Range-Unit": "items",
+            "Prefer": "count=exact",
+        },
+    )
+    response.raise_for_status()
+
+    # PostgREST returns total in Content-Range: 0-19/47
+    content_range = response.headers.get("Content-Range", "")  # e.g. "0-19/47"
+    total = 0
+    if "/" in content_range:
+        try:
+            total = int(content_range.split("/")[-1])
+        except ValueError:
+            pass
+
+    return response.json(), total
+
+
+async def select_count(table: str, filters: dict | None = None) -> int:
+    """Return the total count of rows matching the given filters."""
+    client = await get_client()
+    params: dict = {"select": "count"}
+    if filters:
+        params.update(filters)
+    response = await client.get(
+        f"/{table}",
+        params=params,
+        headers={**_headers(), "Prefer": "count=exact"},
+    )
+    response.raise_for_status()
+    content_range = response.headers.get("Content-Range", "")
+    if "/" in content_range:
+        try:
+            return int(content_range.split("/")[-1])
+        except ValueError:
+            pass
+    return 0

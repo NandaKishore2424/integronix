@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 
 from database import get_client, close_client
-from routes import icd, health, parse, code
+from routes import icd, health, parse, code, cases, analytics
 
 
 @asynccontextmanager
@@ -43,6 +43,8 @@ app.add_middleware(
 
 # ── Routers ───────────────────────────────────────────────────────────────────
 app.include_router(health.router)
-app.include_router(icd.router,   prefix="/api/v1")
-app.include_router(parse.router, prefix="/api/v1")
-app.include_router(code.router,  prefix="/api/v1")
+app.include_router(icd.router,       prefix="/api/v1")
+app.include_router(parse.router,     prefix="/api/v1")
+app.include_router(code.router,      prefix="/api/v1")
+app.include_router(cases.router,     prefix="/api/v1")
+app.include_router(analytics.router, prefix="/api/v1")

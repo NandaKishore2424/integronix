@@ -3,7 +3,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { Activity, BarChart3, ChevronRight, Shield } from 'lucide-react';
 import { CodeResponse } from '@/types/coding';
-import { runCodingPipeline, ApiError } from '@/lib/api';
+import { runCodingPipeline, runPdfPipeline, ApiError } from '@/lib/api';
 import CodeInputPanel from '@/components/CodeInputPanel';
 import ResultsPanel from '@/components/ResultsPanel';
 
@@ -53,6 +53,23 @@ export default function AnalyzePage() {
         }
     }
 
+    async function handlePdfSubmit(file: File, humanCode?: string) {
+        setLoading(true); setError(null); setActiveTab('analyze');
+        let i = 0;
+        intervalRef.current = setInterval(() => { i++; setStageIdx(i); }, 1200);
+        try {
+            const data = await runPdfPipeline(file, humanCode);
+            setResult(data);
+            setActiveTab('results');
+        } catch (err) {
+            setError(err instanceof ApiError ? err.message : 'An unexpected error occurred. Please check your connection.');
+        } finally {
+            if (intervalRef.current) clearInterval(intervalRef.current);
+            setStageIdx(0);
+            setLoading(false);
+        }
+    }
+
     function handleReanalyze() { setActiveTab('analyze'); }
 
     return (
@@ -86,7 +103,7 @@ export default function AnalyzePage() {
                         </span>
                     </h1>
                     <p className="text-slate-400 text-sm max-w-xl">
-                        Paste clinical documentation below. The AI pipeline will recommend ICD-10-CM codes, flag discrepancies, and quantify revenue impact in under 2 seconds.
+                        Paste clinical documentation or upload a discharge summary PDF. The AI pipeline will recommend ICD-10-CM codes, flag discrepancies, and quantify revenue impact in under 2 seconds.
                     </p>
                     <div className="flex flex-wrap gap-5 mt-5">
                         {[
@@ -138,6 +155,7 @@ export default function AnalyzePage() {
                             stageLabel={stageLabel}
                             error={error}
                             onSubmit={handleSubmit}
+                            onSubmitPdf={handlePdfSubmit}
                         />
                     )}
                     {activeTab === 'results' && result && (
