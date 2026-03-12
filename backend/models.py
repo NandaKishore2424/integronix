@@ -210,3 +210,10 @@ class TopCodeItem(BaseModel):
 class AnalyticsTopCodes(BaseModel):
     """Top 10 ICD codes by frequency."""
     codes: List[TopCodeItem]
+
+
+class DiscrepancyBreakdown(BaseModel):
+    """One slice of the discrepancy type donut chart."""
+    type:  str
+    label: str
+    count: int
