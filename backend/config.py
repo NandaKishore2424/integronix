@@ -27,6 +27,15 @@ class Settings(BaseSettings):
     snomed_version: str = "SNOMED-CT-2024"
     loinc_version: str = "LOINC-2.77"
 
+    # ── WHO ICD API ───────────────────────────────────────────────────────────
+    who_icd_client_id: str = ""
+    who_icd_client_secret: str = ""
+    who_icd_token_endpoint: str = "https://icdaccessmanagement.who.int/connect/token"
+    who_icd_api_base: str = "https://id.who.int"
+    who_icd_default_version: str = "ICD-11"       # "ICD-11" | "ICD-10"
+    who_icd_11_release: str = "2026-01"            # Latest ICD-11 release (YYYY-MM format)
+    who_icd_10_release: str = "2019"               # ICD-10 release used
+
     # ── App ───────────────────────────────────────────────────────────────────
     app_env: str = "development"
     app_host: str = "0.0.0.0"

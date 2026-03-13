@@ -132,6 +132,20 @@ def _final_score(candidate: dict, entities: dict, raw_text: str = "") -> float:
     return round(max(0.0, min(score, 1.0)), 4)
 
 
+# Add a function to prioritize codes based on clinical keywords
+
+def _rank_by_specificity(candidates: list, raw_text: str) -> list:
+    """
+    Re-rank candidates based on clinical keywords like "Acute" or "Chronic".
+    """
+    for candidate in candidates:
+        description = candidate.get("description", "").lower()
+        if "acute" in raw_text.lower() and "acute" in description:
+            candidate["final_score"] += 0.3  # Boost acute cases
+        elif "chronic" in raw_text.lower() and "chronic" in description:
+            candidate["final_score"] += 0.2  # Boost chronic cases
+    return sorted(candidates, key=lambda x: x["final_score"], reverse=True)
+
 @safe_node("icd_decision")
 async def icd_decision_node(state: CodingState) -> CodingState:
     """
@@ -166,7 +180,9 @@ async def icd_decision_node(state: CodingState) -> CodingState:
         score = _final_score(c, entities, raw_text)
         scored.append({**c, "final_score": score})
 
-    scored.sort(key=lambda x: x["final_score"], reverse=True)
+    # Apply keyword-aware re-ranking
+    scored = _rank_by_specificity(scored, raw_text)
+
     winner = scored[0]
 
     state["final_icd_code"]      = winner["code"]

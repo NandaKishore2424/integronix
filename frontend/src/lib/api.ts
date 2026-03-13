@@ -136,3 +136,5 @@ export async function fetchDiscrepancyBreakdown(): Promise<DiscrepancyPoint[]> {
     }
     return res.json() as Promise<DiscrepancyPoint[]>;
 }
+
+export { fetchAnalyticsOverview as getAnalyticsOverview, fetchTopCodes as getTopCodes };

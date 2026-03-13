@@ -47,12 +47,12 @@ export default function ResultsPanel({ result, onReanalyze }: Props) {
                     </span>
                 </div>
                 <div className="w-px h-8 bg-white/10 hidden sm:block" />
-                <div className="flex flex-col gap-0.5 hidden sm:flex">
+                <div className="flex flex-col gap-0.5 sm:flex">
                     <span className="mono-label">Standard</span>
                     <span className="text-xs font-mono text-slate-300">ICD-10-CM 2024</span>
                 </div>
                 <div className="w-px h-8 bg-white/10 hidden sm:block" />
-                <div className="flex flex-col gap-0.5 hidden sm:flex">
+                <div className="flex flex-col gap-0.5 sm:flex">
                     <span className="mono-label">Financial Impact</span>
                     <span className={`text-sm font-bold ${delta > 0 ? 'text-success' : delta < 0 ? 'text-danger' : 'text-slate-400'}`}>
                         {delta !== 0 ? formatCurrency(delta) : '—'}
@@ -62,7 +62,7 @@ export default function ResultsPanel({ result, onReanalyze }: Props) {
                 {result.document_source === 'pdf_upload' && (
                     <>
                         <div className="w-px h-8 bg-white/10 hidden sm:block" />
-                        <div className="flex flex-col gap-0.5 hidden sm:flex">
+                        <div className="flex flex-col gap-0.5 sm:flex">
                             <span className="mono-label">Source</span>
                             {result.ocr_used ? (
                                 <span className="flex items-center gap-1 text-xs font-mono text-amber-400">

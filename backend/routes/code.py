@@ -19,6 +19,7 @@ from fastapi import APIRouter, HTTPException, UploadFile, File, Form
 from typing import Optional, List
 from agents.graph import build_integronix_graph, CodingState
 from models import CodeRequest, CodeResponse
+from config import settings
 from logger import get_logger
 
 log = get_logger(__name__)
@@ -160,6 +161,7 @@ async def run_full_pipeline(body: CodeRequest):
         "raw_text":       body.raw_text.strip(),
         "human_icd_code": body.human_icd_code,
         "pdf_bytes":      None,
+        "icd_version":    settings.who_icd_default_version,  # "ICD-11" or "ICD-10" per org
     }
 
     log.info(
@@ -216,6 +218,7 @@ async def run_pdf_pipeline(
         "pdf_bytes":      pdf_bytes,
         "raw_text":       "",           # Node 1 will populate this from PDF
         "human_icd_code": human_icd_code.strip().upper() if human_icd_code else None,
+        "icd_version":    settings.who_icd_default_version,  # "ICD-11" or "ICD-10"
     }
 
     log.info(
