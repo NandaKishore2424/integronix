@@ -17,6 +17,19 @@ async def snomed_icd_mapping_node(state: CodingState) -> CodingState:
     # This is the fourth node in our graph. It tries to find a direct
     # mapping from the SNOMED code we found to an ICD-10 code.
     session_id = str(state.get("session_id", ""))
+
+    # ── WHO ICD API fast-path: skip this node entirely ────────────────────────
+    # If the WHO ICD API already populated candidate_icd_codes in Node 3,
+    # this crosswalk step is redundant—the WHO API IS the crosswalk.
+    if state.get("who_icd_candidates"):
+        log.info(
+            "snomed_icd_map_skipped",
+            session_id=session_id,
+            reason="who_api_candidates_already_present",
+            candidate_count=len(state["who_icd_candidates"]),
+        )
+        return state
+
     resolved_code = state.get("resolved_snomed_code")
 
     # If we don't have a SNOMED code from the previous step, we can't proceed.
