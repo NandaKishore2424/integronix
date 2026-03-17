@@ -6,11 +6,11 @@ import Link from 'next/link';
 import { Inbox, CheckSquare, Users, LogOut, ChevronRight, Shield, Building2 } from 'lucide-react';
 import { useAuth } from '@/components/AuthProvider';
 
-// Payer specific nav items
+// Payer specific nav items — allowedRoles controls visibility per role
 const navItems = [
-    { href: '/payer/inbox',        icon: Inbox,       name: 'Claim Queue' },
-    { href: '/payer/adjudicate',   icon: CheckSquare, name: 'Adjudications' },
-    { href: '/payer/admin',        icon: Users,       name: 'Staff', adminOnly: true },
+    { href: '/payer/inbox',        icon: Inbox,       name: 'Claim Queue',   allowedRoles: ['payer', 'admin'] },
+    { href: '/payer/adjudicate',   icon: CheckSquare, name: 'Adjudications', allowedRoles: ['payer', 'admin'] },
+    { href: '/payer/admin',        icon: Users,       name: 'Staff',         allowedRoles: ['admin'] },
 ];
 
 export default function PayerLayout({ children }: { children: React.ReactNode }) {
@@ -20,6 +20,10 @@ export default function PayerLayout({ children }: { children: React.ReactNode })
 
     useEffect(() => {
         if (!loading && !orgUser) router.push('/auth/login');
+        // Hospital users have no business in the payer portal
+        if (!loading && orgUser && !['payer', 'admin'].includes(orgUser.role)) {
+            router.push('/hospital/coder/analyze');
+        }
     }, [loading, orgUser, router]);
 
     if (loading) {
@@ -34,8 +38,6 @@ export default function PayerLayout({ children }: { children: React.ReactNode })
     }
 
     if (!orgUser) return null;
-
-    const isAdmin = orgUser.role === 'admin';
 
     return (
         <div className="min-h-screen flex bg-slate-950">
@@ -60,7 +62,8 @@ export default function PayerLayout({ children }: { children: React.ReactNode })
                 {/* Nav */}
                 <nav className="flex-1 px-3 py-4 space-y-1 overflow-y-auto">
                     {navItems.map(item => {
-                        if (item.adminOnly && !isAdmin) return null;
+                        // Hide items the user's role isn't authorized for
+                        if (!item.allowedRoles.includes(orgUser.role)) return null;
                         const active = pathname === item.href || pathname.startsWith(item.href + '/');
                         return (
                             <Link
@@ -87,8 +90,9 @@ export default function PayerLayout({ children }: { children: React.ReactNode })
                         </div>
                         <div className="min-w-0 flex-1">
                             <p className="text-xs font-medium text-white truncate">{orgUser.full_name}</p>
-                            <div className={`text-[10px] font-semibold uppercase tracking-wider mt-0.5 ${orgUser.role === 'admin' ? 'text-emerald-400' : 'text-slate-400'
-                                }`}>
+                            <div className={`text-[10px] font-semibold uppercase tracking-wider mt-0.5 ${
+                                orgUser.role === 'admin' ? 'text-emerald-400' : 'text-teal-400'
+                            }`}>
                                 {orgUser.role}
                             </div>
                         </div>

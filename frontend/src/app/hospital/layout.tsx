@@ -6,14 +6,14 @@ import Link from 'next/link';
 import { BarChart3, Activity, GitBranch, Users, LogOut, ChevronRight, Shield, History, Landmark } from 'lucide-react';
 import { useAuth } from '@/components/AuthProvider';
 
-// Hospital specific nav items
+// Hospital specific nav items — allowedRoles controls visibility per role
 const navItems = [
-    { href: '/hospital/coder/analyze',   icon: Activity,   name: 'New Analysis' },
-    { href: '/hospital/rcm/claims',      icon: Landmark,   name: 'Claims Inbox' },
-    { href: '/hospital/coder/history',   icon: History,    name: 'Case History' },
-    { href: '/hospital/rcm/analytics',   icon: BarChart3,  name: 'Analytics' },
-    { href: '/hospital/admin/branches',  icon: GitBranch,  name: 'Branches', adminOnly: true },
-    { href: '/hospital/admin/users',     icon: Users,      name: 'Users', adminOnly: true },
+    { href: '/hospital/coder/analyze',   icon: Activity,   name: 'New Analysis',  allowedRoles: ['coder', 'admin'] },
+    { href: '/hospital/rcm/claims',      icon: Landmark,   name: 'Claims Inbox',  allowedRoles: ['rcm', 'admin'] },
+    { href: '/hospital/coder/history',   icon: History,    name: 'Case History',  allowedRoles: ['coder', 'admin'] },
+    { href: '/hospital/rcm/analytics',   icon: BarChart3,  name: 'Analytics',     allowedRoles: ['rcm', 'admin'] },
+    { href: '/hospital/admin/branches',  icon: GitBranch,  name: 'Branches',      allowedRoles: ['admin'] },
+    { href: '/hospital/admin/users',     icon: Users,      name: 'Users',         allowedRoles: ['admin'] },
 ];
 
 export default function HospitalLayout({ children }: { children: React.ReactNode }) {
@@ -23,6 +23,8 @@ export default function HospitalLayout({ children }: { children: React.ReactNode
 
     useEffect(() => {
         if (!loading && !orgUser) router.push('/auth/login');
+        // Payer users have no business in the hospital portal
+        if (!loading && orgUser?.role === 'payer') router.push('/payer/inbox');
     }, [loading, orgUser, router]);
 
     if (loading) {
@@ -37,8 +39,6 @@ export default function HospitalLayout({ children }: { children: React.ReactNode
     }
 
     if (!orgUser) return null;
-
-    const isAdmin = orgUser.role === 'admin';
 
     // Optional: bounce payer users out of hospital layout
     // if (org?.name === 'Star Health Insurance') { router.push('/payer/inbox'); return null; }
@@ -66,7 +66,8 @@ export default function HospitalLayout({ children }: { children: React.ReactNode
                 {/* Nav */}
                 <nav className="flex-1 px-3 py-4 space-y-1 overflow-y-auto">
                     {navItems.map(item => {
-                        if (item.adminOnly && !isAdmin) return null;
+                        // Hide items the user's role isn't authorized for
+                        if (!item.allowedRoles.includes(orgUser.role)) return null;
                         const active = pathname === item.href || pathname.startsWith(item.href + '/');
                         return (
                             <Link
@@ -93,8 +94,13 @@ export default function HospitalLayout({ children }: { children: React.ReactNode
                         </div>
                         <div className="min-w-0 flex-1">
                             <p className="text-xs font-medium text-white truncate">{orgUser.full_name}</p>
-                            <div className={`text-[10px] font-semibold uppercase tracking-wider mt-0.5 ${orgUser.role === 'admin' ? 'text-amber-400' : orgUser.role === 'auditor' ? 'text-blue-400' : 'text-emerald-400'
-                                }`}>
+                            <div className={`text-[10px] font-semibold uppercase tracking-wider mt-0.5 ${
+                                orgUser.role === 'admin'   ? 'text-amber-400' :
+                                orgUser.role === 'auditor' ? 'text-blue-400'  :
+                                orgUser.role === 'rcm'     ? 'text-violet-400' :
+                                orgUser.role === 'payer'   ? 'text-emerald-400' :
+                                'text-emerald-400' // coder
+                            }`}>
                                 {orgUser.role}
                             </div>
                         </div>

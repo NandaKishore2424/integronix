@@ -6,8 +6,8 @@ const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
 // Single browser client instance — safe for 'use client' components only
 export const supabase = createBrowserClient(supabaseUrl, supabaseAnonKey);
 
-// Types matching our public.users table
-export type UserRole = 'admin' | 'auditor' | 'coder';
+// Types matching our public.users table (all 5 valid roles)
+export type UserRole = 'admin' | 'auditor' | 'coder' | 'rcm' | 'payer';
 
 export interface OrgUser {
     id: string;

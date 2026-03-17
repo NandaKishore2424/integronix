@@ -93,6 +93,59 @@ async def insert(table: str, data: dict) -> dict | None:
         table=table,
         status=response.status_code,
     )
+
+
+async def upsert_icd_code_from_who(
+    code: str, description: str, icd_version: str
+) -> None:
+    """
+    Cache a WHO API result into the icd_codes table.
+
+    Uses PostgREST upsert (on_conflict=code) so existing hand-curated rows
+    are NEVER overwritten. Only inserts if the code is truly new.
+    Fires silently — all errors are swallowed so a cache miss never blocks
+    the main request pipeline.
+
+    Called with asyncio.create_task() from who_icd_service after a successful
+    WHO API search so there is zero latency impact on the user.
+    """
+    if not code or not description:
+        return
+    try:
+        client = await get_client()
+        payload = {
+            "code":               code.strip(),
+            "description":        description.strip(),
+            "icd_version":        icd_version,
+            "is_billable":        True,
+            "is_cc":              False,
+            "is_mcc":             False,
+            "base_reimbursement": 5000.0,   # Conservative default until manually set
+            "source":             "who_icd_api",
+        }
+        response = await client.post(
+            "/icd_codes",
+            content=json.dumps(payload, default=str),
+            headers={
+                **_headers(),
+                "Prefer": "resolution=ignore-duplicates,return=minimal",
+                # resolution=ignore-duplicates: silently skip if code already exists
+                # return=minimal: no response body needed for a background task
+            },
+            params={"on_conflict": "code"},
+        )
+        if response.status_code in (200, 201, 204):
+            log.info("who_icd_cache_upsert_ok", code=code, version=icd_version)
+        else:
+            log.warning(
+                "who_icd_cache_upsert_skipped",
+                code=code,
+                status=response.status_code,
+                detail=response.text[:200],
+            )
+    except Exception as exc:
+        # Never let a background cache write break the main pipeline
+        log.warning("who_icd_cache_upsert_error", code=code, error=str(exc))
 async def select_paginated(
     table: str,
     query: str = "*",
