@@ -19,6 +19,7 @@ import httpx
 
 from config import settings
 from logger import get_logger
+from database import upsert_icd_code_from_who
 
 log = get_logger(__name__)
 
@@ -113,6 +114,19 @@ async def search_icd(
             version=icd_version,
             results_found=len(results),
         )
+
+        # ── Background cache: persist new codes to local icd_codes table ──────
+        # Fire-and-forget: creates background tasks so zero latency added to user
+        for r in results:
+            if r.get("code") and r.get("description"):
+                asyncio.create_task(
+                    upsert_icd_code_from_who(
+                        code=r["code"],
+                        description=r["description"],
+                        icd_version=r.get("icd_version", icd_version),
+                    )
+                )
+
         return results
 
     except httpx.TimeoutException:
