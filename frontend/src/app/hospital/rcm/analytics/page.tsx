@@ -19,6 +19,7 @@ import {
     fetchDiscrepancyBreakdown,
     formatCurrency,
 } from '@/lib/api';
+import { useAuth } from '@/components/AuthProvider';
 import { AnalyticsOverview, TopCodeItem, DiscrepancyPoint } from '@/types/analytics';
 
 // ── Color palettes ─────────────────────────────────────────────────────────────
@@ -79,17 +80,22 @@ function Skeleton({ h = 'h-48' }: { h?: string }) {
 
 // ── Main page ──────────────────────────────────────────────────────────────────
 export default function AnalyticsPage() {
+    const { orgUser } = useAuth();
     const [overview,      setOverview]      = useState<AnalyticsOverview | null>(null);
     const [topCodes,      setTopCodes]      = useState<TopCodeItem[]>([]);
     const [discrepancy,   setDiscrepancy]   = useState<DiscrepancyPoint[]>([]);
     const [loading,       setLoading]       = useState(true);
     const [error,         setError]         = useState<string | null>(null);
 
+    const orgId = orgUser?.organization_id;
+
     useEffect(() => {
+        if (!orgId) return; // Wait until auth is hydrated
+        setLoading(true);
         Promise.all([
-            fetchAnalyticsOverview(),
-            fetchTopCodes(),
-            fetchDiscrepancyBreakdown(),
+            fetchAnalyticsOverview(orgId),
+            fetchTopCodes(orgId),
+            fetchDiscrepancyBreakdown(orgId),
         ])
             .then(([ov, tc, disc]) => {
                 setOverview(ov);

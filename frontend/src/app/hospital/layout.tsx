@@ -9,7 +9,7 @@ import { useAuth } from '@/components/AuthProvider';
 // Hospital specific nav items — allowedRoles controls visibility per role
 const navItems = [
     { href: '/hospital/coder/analyze',   icon: Activity,   name: 'New Analysis',  allowedRoles: ['coder', 'admin'] },
-    { href: '/hospital/rcm/claims',      icon: Landmark,   name: 'Claims Inbox',  allowedRoles: ['rcm', 'admin'] },
+    { href: '/hospital/rcm/inbox',      icon: Landmark,   name: 'Claims Inbox',  allowedRoles: ['rcm', 'admin'] },
     { href: '/hospital/coder/history',   icon: History,    name: 'Case History',  allowedRoles: ['coder', 'admin'] },
     { href: '/hospital/rcm/analytics',   icon: BarChart3,  name: 'Analytics',     allowedRoles: ['rcm', 'admin'] },
     { href: '/hospital/admin/branches',  icon: GitBranch,  name: 'Branches',      allowedRoles: ['admin'] },

@@ -110,8 +110,9 @@ export async function fetchCaseDetail(sessionId: string): Promise<CodeResponse> 
 // ── Phase 6C: Analytics API functions ───────────────────────────────────────
 
 /** GET /api/v1/analytics/overview — KPI cards + 30-day trend */
-export async function fetchAnalyticsOverview(): Promise<AnalyticsOverview> {
-    const res = await fetch(`${API_BASE}/api/v1/analytics/overview`);
+export async function fetchAnalyticsOverview(orgId?: string): Promise<AnalyticsOverview> {
+    const url = orgId ? `${API_BASE}/api/v1/analytics/overview?org_id=${orgId}` : `${API_BASE}/api/v1/analytics/overview`;
+    const res = await fetch(url);
     if (!res.ok) {
         const err = await res.json().catch(() => ({ detail: 'Unknown error' }));
         throw new ApiError(res.status, err.detail ?? `HTTP ${res.status}`);
@@ -120,8 +121,9 @@ export async function fetchAnalyticsOverview(): Promise<AnalyticsOverview> {
 }
 
 /** GET /api/v1/analytics/top-codes — top 10 ICD codes by frequency */
-export async function fetchTopCodes(): Promise<AnalyticsTopCodes> {
-    const res = await fetch(`${API_BASE}/api/v1/analytics/top-codes`);
+export async function fetchTopCodes(orgId?: string): Promise<AnalyticsTopCodes> {
+    const url = orgId ? `${API_BASE}/api/v1/analytics/top-codes?org_id=${orgId}` : `${API_BASE}/api/v1/analytics/top-codes`;
+    const res = await fetch(url);
     if (!res.ok) {
         const err = await res.json().catch(() => ({ detail: 'Unknown error' }));
         throw new ApiError(res.status, err.detail ?? `HTTP ${res.status}`);
@@ -130,8 +132,9 @@ export async function fetchTopCodes(): Promise<AnalyticsTopCodes> {
 }
 
 /** GET /api/v1/analytics/discrepancy-breakdown — count per discrepancy type */
-export async function fetchDiscrepancyBreakdown(): Promise<DiscrepancyPoint[]> {
-    const res = await fetch(`${API_BASE}/api/v1/analytics/discrepancy-breakdown`);
+export async function fetchDiscrepancyBreakdown(orgId?: string): Promise<DiscrepancyPoint[]> {
+    const url = orgId ? `${API_BASE}/api/v1/analytics/discrepancy-breakdown?org_id=${orgId}` : `${API_BASE}/api/v1/analytics/discrepancy-breakdown`;
+    const res = await fetch(url);
     if (!res.ok) {
         const err = await res.json().catch(() => ({ detail: 'Unknown error' }));
         throw new ApiError(res.status, err.detail ?? `HTTP ${res.status}`);

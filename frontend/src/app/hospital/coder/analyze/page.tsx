@@ -4,6 +4,7 @@ import { useState, useRef, useEffect } from 'react';
 import { Activity, BarChart3, ChevronRight, Shield } from 'lucide-react';
 import { CodeResponse } from '@/types/coding';
 import { runCodingPipeline, runPdfPipeline, ApiError } from '@/lib/api';
+import { useAuth } from '@/components/AuthProvider';
 import CodeInputPanel from '@/components/CodeInputPanel';
 import ResultsPanel from '@/components/ResultsPanel';
 
@@ -18,12 +19,14 @@ const PROCESSING_STAGES = [
 ];
 
 export default function AnalyzePage() {
+    const { orgUser } = useAuth();
     const [activeTab, setActiveTab] = useState<Tab>('analyze');
     const [result, setResult] = useState<CodeResponse | null>(null);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [stageIdx, setStageIdx] = useState(0);
-    const [orgId, setOrgId] = useState<string>('00000000-0000-0000-0000-000000000001'); // Default to City General
+    // Use the logged-in user's org ID — no more hardcoded City General
+    const orgId = orgUser?.organization_id ?? null;
     // FIX FE-BUG-006: Store interval ref at component scope so unmount cleanup can clear it
     const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -150,18 +153,13 @@ export default function AnalyzePage() {
                     )}
                 </div>
                 
-                {/* Demo Hospital Selector */}
-                <div className="flex items-center gap-3 px-3 py-1 bg-indigo-500/5 rounded-lg border border-indigo-500/10">
-                    <span className="text-[10px] font-mono text-indigo-400 uppercase tracking-widest font-bold">Demo Context:</span>
-                    <select 
-                        value={orgId} 
-                        onChange={(e) => setOrgId(e.target.value)}
-                        className="bg-transparent text-xs font-medium text-slate-300 focus:outline-none cursor-pointer hover:text-white transition-colors"
-                    >
-                        <option value="00000000-0000-0000-0000-000000000001">🏥 City General (1.2x)</option>
-                        <option value="00000000-0000-0000-0000-000000000002">💎 Premium Care (1.8x)</option>
-                    </select>
-                </div>
+                {/* Org context badge (read-only, reflects logged-in user) */}
+                {orgUser && (
+                    <div className="flex items-center gap-3 px-3 py-1 bg-indigo-500/5 rounded-lg border border-indigo-500/10">
+                        <span className="text-[10px] font-mono text-indigo-400 uppercase tracking-widest font-bold">Context:</span>
+                        <span className="text-xs font-medium text-slate-300">🏥 {orgUser.organization_id?.split('-')[0]}</span>
+                    </div>
+                )}
             </div>
 
             {/* Content */}

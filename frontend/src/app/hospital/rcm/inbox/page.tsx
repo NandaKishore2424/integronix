@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { fetchClaims, Claim, appealClaim, exportEdiUrl } from '@/lib/api';
+import { useAuth } from '@/components/AuthProvider';
 import { Landmark, CheckCircle2, Clock, AlertTriangle, Search, Activity, Download } from 'lucide-react';
 
 const STATUS_CONFIG: Record<string, { color: string; icon: any; label: string }> = {
@@ -19,6 +20,7 @@ function formatCurrency(amount: number) {
 }
 
 export default function ClaimsInboxPage() {
+    const { orgUser } = useAuth();
     const [claims, setClaims] = useState<Claim[]>([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
@@ -28,10 +30,11 @@ export default function ClaimsInboxPage() {
     const [justification, setJustification] = useState('');
     const [appealLoading, setAppealLoading] = useState(false);
 
-    // Default to City General for demo
-    const orgId = '00000000-0000-0000-0000-000000000001';
+    // Use logged-in user's org ID — supports any tenant (Saveetha, City General, etc.)
+    const orgId = orgUser?.organization_id;
 
     useEffect(() => {
+        if (!orgId) return; // wait until auth is ready
         setLoading(true);
         fetchClaims(orgId)
             .then(data => setClaims(data))
@@ -40,7 +43,7 @@ export default function ClaimsInboxPage() {
     }, [orgId]);
 
     const handleAppeal = async () => {
-        if (!appealingClaim || !justification.trim()) return;
+        if (!appealingClaim || !justification.trim() || !orgId) return;
         setAppealLoading(true);
         try {
             await appealClaim(appealingClaim.id, justification);
