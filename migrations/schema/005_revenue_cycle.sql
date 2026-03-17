@@ -1,3 +1,18 @@
+-- ============================================================
+-- Migration 005: Revenue Lookup Table
+-- DRG-based reimbursement reference per ICD code
+-- ============================================================
+
+CREATE TABLE revenue_lookup (
+    id                  SERIAL      PRIMARY KEY,
+    icd_code            TEXT        REFERENCES icd_codes(code),
+    drg_group           TEXT,               -- e.g. "DRG-637", "DRG-291"
+    base_reimbursement  NUMERIC,            -- Base Medicare reimbursement ($)
+    cc_adjustment       NUMERIC DEFAULT 0,  -- Added when CC present
+    mcc_adjustment      NUMERIC DEFAULT 0,  -- Added when MCC present
+    effective_year      TEXT    DEFAULT '2024',
+    notes               TEXT
+);
 -- Migration: 024_payer_system.sql
 -- Description: Creates the Payer and Claims tables to support the RCM post-coding workflow.
 -- Run this in: Supabase → SQL Editor → New Query → Run
@@ -14,15 +29,6 @@ CREATE TABLE IF NOT EXISTS public.payers (
 );
 
 COMMENT ON TABLE public.payers IS 'Insurance companies or entities responsible for reimbursing hospitals. The base_allowed_multiplier dictates their standard active contract rate compared to baseline Medicare (1.0).';
-
--- ── 2. Seed Demo Payers ────────────────────────────────────────────────────
-INSERT INTO public.payers (name, payer_type, base_allowed_multiplier)
-VALUES 
-    ('Medicare Complete', 'medicare', 1.00),
-    ('BlueShield Corporate', 'commercial', 1.25),
-    ('United Healthcare Plus', 'commercial', 1.20),
-    ('Aetna Preferred', 'commercial', 1.15)
-ON CONFLICT DO NOTHING;
 
 -- ── 3. Claims Table ────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS public.claims (

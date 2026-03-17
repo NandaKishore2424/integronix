@@ -97,3 +97,87 @@ ON CONFLICT (email) DO NOTHING;
 -- JOIN organizations o ON o.id = u.organization_id
 -- LEFT JOIN branches b ON b.id = u.branch_id
 -- ORDER BY u.role, u.full_name;
+-- Migration: 023_seed_premium_org.sql
+-- Description: Adds a second demo organization "Premium Care Institute"
+-- to demonstrate the dynamic pricing multiplier (set to 1.8x).
+
+-- 1. Insert the Premium Organization
+INSERT INTO public.organizations (id, name, slug, type, country, timezone)
+VALUES (
+    '00000000-0000-0000-0000-000000000002',
+    'Premium Care Institute',
+    'premium-care-institute',
+    'hospital',
+    'US',
+    'America/New_York'
+) ON CONFLICT (id) DO NOTHING;
+
+-- 2. Insert Settings for the Premium Organization (1.8x multiplier)
+INSERT INTO public.org_settings (organization_id, icd_version, coding_mode, claim_scheme, cpt_pricing_multiplier)
+VALUES (
+    '00000000-0000-0000-0000-000000000002',
+    'ICD-10',
+    'aggressive',
+    'private',
+    1.80
+) ON CONFLICT (organization_id) DO UPDATE 
+SET cpt_pricing_multiplier = 1.80;
+
+-- 3. Just in case, ensure City General is also explicitly set to 1.2x
+INSERT INTO public.org_settings (organization_id, icd_version, coding_mode, claim_scheme, cpt_pricing_multiplier)
+VALUES (
+    '00000000-0000-0000-0000-000000000001',
+    'ICD-10',
+    'balanced',
+    'private',
+    1.20
+) ON CONFLICT (organization_id) DO UPDATE 
+SET cpt_pricing_multiplier = 1.20;
+
+-- ── 2. Seed Demo Payers ────────────────────────────────────────────────────
+INSERT INTO public.payers (name, payer_type, base_allowed_multiplier)
+VALUES 
+    ('Medicare Complete', 'medicare', 1.00),
+    ('BlueShield Corporate', 'commercial', 1.25),
+    ('United Healthcare Plus', 'commercial', 1.20),
+    ('Aetna Preferred', 'commercial', 1.15)
+ON CONFLICT DO NOTHING;
+
+
+-- Step 3: Seed a demo payer organization and user for testing
+-- (Only inserts if the org slug doesn't already exist)
+
+INSERT INTO public.organizations (id, name, slug, type, country, timezone)
+VALUES (
+    '00000000-0000-0000-0000-000000000002',
+    'Star Health Insurance',
+    'star-health-insurance',
+    'insurance_payer',
+    'IN',
+    'Asia/Kolkata'
+) ON CONFLICT (slug) DO NOTHING;
+
+-- Seed a demo payer user into that org
+INSERT INTO public.users (id, organization_id, branch_id, email, full_name, role)
+VALUES (
+    '00000000-0000-0000-0000-000000000200',
+    '00000000-0000-0000-0000-000000000002',
+    NULL,
+    'adjudicator@starhealth.demo',
+    'Priya Nair (Payer Adjudicator)',
+    'payer'
+) ON CONFLICT (email) DO NOTHING;
+
+-- Seed a demo RCM user in the original hospital org
+INSERT INTO public.users (id, organization_id, branch_id, email, full_name, role)
+VALUES (
+    '00000000-0000-0000-0000-000000000104',
+    '00000000-0000-0000-0000-000000000001',
+    NULL,
+    'rcm@citygeneral.demo',
+    'David Kim (RCM Manager)',
+    'rcm'
+) ON CONFLICT (email) DO NOTHING;
+
+-- Verification Query (run after applying):
+-- SELECT id, email, role FROM public.users ORDER BY role, email;
