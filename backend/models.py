@@ -44,6 +44,7 @@ class ObservationEntity(BaseModel):
 class ExtractionResult(BaseModel):
     diagnoses: List[DiagnosisEntity]
     observations: List[ObservationEntity] = []
+    procedures_and_services: List[str] = []
 
 
 # ── ICD Code Schemas ──────────────────────────────────────────────────────────
@@ -116,6 +117,7 @@ class CodeRequest(BaseModel):
     raw_text: str
     session_id: Optional[str] = None
     human_icd_code: Optional[str] = None
+    org_id: Optional[str] = None  # Organization ID for pricing multiplier lookup
 
 
 class CodeResponse(BaseModel):
@@ -127,6 +129,7 @@ class CodeResponse(BaseModel):
     resolved_snomed_code: Optional[str] = None
     candidates:           list = []
     icd_codes:            List[dict] = []
+    cpt_codes:            List[dict] = []
     discrepancy_type:     Optional[str] = None
     discrepancy:          Optional[dict] = None
     financial_delta:      Optional[float] = None
@@ -136,6 +139,7 @@ class CodeResponse(BaseModel):
     extraction_metadata:  dict = {}
     fhir_condition:       Optional[dict] = None
     error_at:             Optional[str] = None
+    financial_summary:    Optional[dict] = None  # RCM financial breakdown
     # Document source tracking (Phase 6A)
     document_source:      Optional[str] = None  # "text_input" | "pdf_upload"
     ocr_used:             Optional[bool] = None

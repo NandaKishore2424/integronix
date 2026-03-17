@@ -61,7 +61,7 @@ export default function SignupPage() {
             });
             if (userErr) throw new Error('Could not create user profile: ' + userErr.message);
 
-            router.push('/dashboard/analyze');
+            router.push('/hospital/coder/analyze');
         } catch (err: unknown) {
             setError(err instanceof Error ? err.message : 'Something went wrong.');
             setLoading(false);

@@ -71,6 +71,9 @@ Return this exact JSON structure:
       "value": "numeric or text value",
       "unit": "unit string or null"
     }}
+  ],
+  "procedures_and_services": [
+    "name of surgical or medical procedure, scan, or service"  
   ]
 }}
 
@@ -153,6 +156,11 @@ async def extract_clinical_entities(
             parsed = await _call_groq(raw_text)
             result = ExtractionResult(**parsed)
 
+            # Enhance result with evidence snippets
+            for diagnosis in result.diagnoses:
+                evidence_snippet = extract_evidence_snippet(raw_text, diagnosis.text)
+                diagnosis.evidence_text = evidence_snippet
+
             metadata = {
                 "model": settings.groq_model,
                 "llm_version": settings.groq_model_version,
@@ -176,3 +184,17 @@ async def extract_clinical_entities(
         f"All {settings.groq_max_retries + 1} attempts failed: {last_error}",
         session_id=session_id,
     )
+
+def extract_evidence_snippet(raw_text: str, diagnosis_text: str) -> str:
+    """
+    Extract a snippet of evidence from the raw text that supports the given diagnosis.
+    """
+    # Simple implementation: find the first occurrence of the diagnosis text in the raw text
+    start_idx = raw_text.find(diagnosis_text)
+    if start_idx == -1:
+        return "Evidence not found."
+
+    # Extract a snippet of surrounding context
+    snippet_start = max(0, start_idx - 50)
+    snippet_end = min(len(raw_text), start_idx + 50)
+    return raw_text[snippet_start:snippet_end].strip()

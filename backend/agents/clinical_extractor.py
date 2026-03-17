@@ -25,5 +25,6 @@ async def clinical_extraction_agent(state: CodingState) -> CodingState:
 
     # We'll add the results to our main state object to be used by the next nodes.
     state["structured_entities"] = extraction.model_dump()
+    state["procedures_and_services"] = extraction.procedures_and_services
     state["extraction_metadata"] = metadata
     return state

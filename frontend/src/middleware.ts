@@ -28,14 +28,14 @@ export async function middleware(request: NextRequest) {
     const { data: { session } } = await supabase.auth.getSession();
     const isLoggedIn = !!session;
 
-    // Protect /dashboard/* — redirect to login if not authenticated
-    if (pathname.startsWith('/dashboard') && !isLoggedIn) {
+    // Protect /hospital/* and /payer/* — redirect to login if not authenticated
+    if ((pathname.startsWith('/hospital') || pathname.startsWith('/payer')) && !isLoggedIn) {
         return NextResponse.redirect(new URL('/auth/login', request.url));
     }
 
     // /auth/* — redirect already-logged-in users to dashboard
     if (pathname.startsWith('/auth') && isLoggedIn) {
-        return NextResponse.redirect(new URL('/dashboard/analyze', request.url));
+        return NextResponse.redirect(new URL('/hospital/coder/analyze', request.url));
     }
 
     return response;

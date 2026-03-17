@@ -79,6 +79,10 @@ async def audit_comparison_node(state: CodingState) -> CodingState:
         drg_note = " Human coded MCC not supported by clinical documentation."
     state["drg_flag"] = drg_flag
 
+    # Fetch evidence snippets for both AI and human codes
+    ai_evidence = await fetch_evidence_snippet(ai_code)
+    human_evidence = await fetch_evidence_snippet(human_code)
+
     # Now we can determine the overall type of discrepancy and create a clear explanation.
     if ai_code == human_code:
         discrepancy_type = "EXACT_MATCH"
@@ -124,11 +128,11 @@ async def audit_comparison_node(state: CodingState) -> CodingState:
         "human_code":        human_code,
         "ai_description":    ai_row["description"]    if ai_row    else "Unknown",
         "human_description": human_row["description"] if human_row else "Unknown",
+        "ai_evidence":       ai_evidence,
+        "human_evidence":    human_evidence,
         "explanation":       explanation,
         "revenue_delta":     delta,
         "drg_flag":          drg_flag,
-        "ai_is_mcc":         ai_is_mcc,
-        "ai_is_cc":          ai_is_cc,
     }
 
     # Finally, update the main state object with our results.
@@ -147,3 +151,15 @@ async def audit_comparison_node(state: CodingState) -> CodingState:
     )
 
     return state
+
+
+async def fetch_evidence_snippet(icd_code: str) -> str:
+    """
+    Fetch supporting evidence for the given ICD code from the database.
+    """
+    evidence_row = await select_one(
+        table="icd_evidence",
+        query="snippet",
+        filters={"icd_code": f"eq.{icd_code}"},
+    )
+    return evidence_row["snippet"] if evidence_row else "No evidence available."

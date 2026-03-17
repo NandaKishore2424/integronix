@@ -6,6 +6,7 @@ Import `settings` everywhere instead of using os.getenv().
 """
 from pydantic_settings import BaseSettings
 from functools import lru_cache
+from pydantic import field_validator
 
 
 class Settings(BaseSettings):
@@ -46,6 +47,13 @@ class Settings(BaseSettings):
         env_file = ".env"
         env_file_encoding = "utf-8"
         case_sensitive = False
+
+    @field_validator("supabase_url", "groq_api_key")
+    @classmethod
+    def validate_non_empty(cls, value: str) -> str:
+        if not value:
+            raise ValueError("must not be empty.")
+        return value
 
 
 @lru_cache()
