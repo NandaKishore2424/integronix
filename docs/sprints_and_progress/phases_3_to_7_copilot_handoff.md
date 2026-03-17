@@ -8,10 +8,12 @@
 
 - ✅ Phase 1 — WHO ICD API integrated (`services/who_icd_service.py`, rewired Nodes 3/4/5)
 - ✅ Phase 2 — `org_settings` table live in Supabase (migration 019 ran, seeded with ICD-11)
+- ✅ Phase 3 — Auto-Cache WHO API Results into `icd_codes` table via PostgREST UPSERT
+- ✅ Phase 3 — Dashboard Development completed (`src/app/hospital/rcm/analytics/page.tsx`)
 
 ---
 
-## Phase 3 — Auto-Cache WHO API Results into `icd_codes` table
+## ✅ Phase 3 — Auto-Cache WHO API Results into `icd_codes` table
 
 **Goal:** When WHO API returns a code not in our DB, auto-insert it. DB becomes a warm cache over time.
 
@@ -47,7 +49,7 @@ for r in results:
 
 ---
 
-## Phase 3 — Dashboard Development
+## ✅ Phase 3 — Dashboard Development
 
 **Goal:** Implement the missing dashboard page with KPIs and charts.
 
