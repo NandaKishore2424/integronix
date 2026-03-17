@@ -19,9 +19,17 @@ export default function LoginPage() {
         e.preventDefault();
         setLoading(true); setError('');
         try {
-            const { error: err } = await supabase.auth.signInWithPassword({ email, password });
+            const { data, error: err } = await supabase.auth.signInWithPassword({ email, password });
             if (err) { setError(err.message); return; }
-            router.push('/dashboard/analyze');
+
+            if (data.user) {
+                const { data: userData } = await supabase.from('users').select('*, organizations(name)').eq('id', data.user.id).single();
+                if (userData?.organizations?.name === 'Star Health Insurance') {
+                    router.push('/payer/inbox');
+                } else {
+                    router.push('/hospital/coder/analyze');
+                }
+            }
         } finally {
             setLoading(false);
         }
@@ -39,12 +47,20 @@ export default function LoginPage() {
             return;
         }
         try {
-            const { error: err } = await supabase.auth.signInWithPassword({
+            const { data, error: err } = await supabase.auth.signInWithPassword({
                 email: demoEmail,
                 password: demoPassword,
             });
             if (err) { setError('Demo account not configured. Please sign up first.'); return; }
-            router.push('/dashboard/analyze');
+
+            if (data.user) {
+                const { data: userData } = await supabase.from('users').select('*, organizations(name)').eq('id', data.user.id).single();
+                if (userData?.organizations?.name === 'Star Health Insurance') {
+                    router.push('/payer/inbox');
+                } else {
+                    router.push('/hospital/coder/analyze');
+                }
+            }
         } finally {
             setLoading(false);
         }

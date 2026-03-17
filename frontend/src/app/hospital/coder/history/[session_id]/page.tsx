@@ -70,7 +70,7 @@ export default function CaseDetailPage() {
                     )}
 
                     {!loading && !error && result && (
-                        <ResultsPanel result={result} onReanalyze={() => router.push('/dashboard/analyze')} />
+                        <ResultsPanel result={result} onReanalyze={() => router.push('/hospital/coder/analyze')} />
                     )}
 
                 </div>

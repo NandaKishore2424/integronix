@@ -125,6 +125,7 @@ async def _run_pipeline(initial_state: CodingState, session_id: str) -> CodeResp
         resolved_snomed_code=result.get("resolved_snomed_code"),
         candidates=result.get("candidate_icd_codes", []),
         icd_codes=icd_codes,
+        cpt_codes=result.get("cpt_codes", []),
         discrepancy_type=result.get("discrepancy_type"),
         discrepancy=result.get("discrepancy"),
         financial_delta=result.get("financial_delta"),
@@ -134,6 +135,7 @@ async def _run_pipeline(initial_state: CodingState, session_id: str) -> CodeResp
         extraction_metadata=result.get("extraction_metadata") or {},
         fhir_condition=_build_fhir_condition(icd_codes, session_id),
         error_at=result.get("error_at"),
+        financial_summary=result.get("financial_summary"),
         document_source=result.get("document_source", "text_input"),
         ocr_used=result.get("ocr_used", False),
     )
@@ -161,7 +163,8 @@ async def run_full_pipeline(body: CodeRequest):
         "raw_text":       body.raw_text.strip(),
         "human_icd_code": body.human_icd_code,
         "pdf_bytes":      None,
-        "icd_version":    settings.who_icd_default_version,  # "ICD-11" or "ICD-10" per org
+        "org_id":         body.org_id,
+        "icd_version":    settings.who_icd_default_version,
     }
 
     log.info(

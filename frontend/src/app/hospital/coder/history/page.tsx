@@ -250,7 +250,7 @@ export default function CasesPage() {
                                         return (
                                             <div
                                                 key={c.result_id}
-                                                onClick={() => router.push(`/dashboard/cases/${c.session_id}`)}
+                                                onClick={() => router.push(`/hospital/coder/history/${c.session_id}`)}
                                                 className="grid grid-cols-[1fr_90px_90px_120px_100px_90px_36px] gap-3 px-5 py-3.5 cursor-pointer hover:bg-white/[0.03] transition-colors items-center group"
                                             >
                                                 {/* Date + Source */}

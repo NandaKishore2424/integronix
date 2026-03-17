@@ -11,6 +11,23 @@ export interface IcdCode {
     rationale: string;
 }
 
+export interface CptCode {
+    code: string;
+    description: string;
+    type: string;
+    base_price: number;
+    multiplier: number;
+    gross_charge: number;
+    confidence: number;
+    original_text: string;
+}
+
+export interface FinancialSummary {
+    total_estimated_revenue: number;
+    pricing_multiplier: number;
+    line_items: CptCode[];
+}
+
 export interface IcdCandidate {
     code: string;
     description: string;
@@ -80,6 +97,8 @@ export interface CodeResponse {
     resolved_snomed_code: string | null;
     candidates: IcdCandidate[];
     icd_codes: IcdCode[];
+    cpt_codes: CptCode[];
+    financial_summary: FinancialSummary | null;
     discrepancy_type: string | null;
     discrepancy: Discrepancy | null;
     financial_delta: number | null;
@@ -97,4 +116,5 @@ export interface CodeResponse {
 export interface PipelineRequest {
     raw_text: string;
     human_icd_code?: string | null;
+    org_id?: string | null;
 }

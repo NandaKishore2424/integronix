@@ -27,48 +27,53 @@ DISCREPANCY_RISK = {
 
 def _compute_risk(state: CodingState) -> tuple[float, str]:
     # This function calculates the final risk score based on several factors.
-    confidence   = float(state.get("confidence_score", 0.5))
-    discrepancy  = state.get("discrepancy_type", "NO_COMPARISON")
-    delta        = abs(state.get("financial_delta") or 0.0)
-    drg_flag     = state.get("drg_flag")
-    is_mcc       = False
+    try:
+        confidence   = float(state.get("confidence_score", 0.5))  # Default to 0.5 if missing
+        discrepancy  = state.get("discrepancy_type", "NO_COMPARISON")
+        delta        = abs(state.get("financial_delta") or 0.0)
+        drg_flag     = state.get("drg_flag")
+        is_mcc       = False
 
-    # First, we check if the final selected code is a Major Complication (MCC).
-    # MCCs have a higher impact on reimbursement, so they carry more risk.
-    candidates = state.get("candidate_icd_codes", [])
-    final_code = state.get("final_icd_code", "")
-    for c in candidates:
-        if c.get("code") == final_code and c.get("is_mcc"):
-            is_mcc = True
-            break
+        # First, we check if the final selected code is a Major Complication (MCC).
+        # MCCs have a higher impact on reimbursement, so they carry more risk.
+        candidates = state.get("candidate_icd_codes", [])
+        final_code = state.get("final_icd_code", "")
+        for c in candidates:
+            if c.get("code") == final_code and c.get("is_mcc"):
+                is_mcc = True
+                break
 
-    # The base risk is simply the inverse of our confidence score.
-    # Low confidence means high risk.
-    base_risk = round(1.0 - confidence, 4)
+        # The base risk is simply the inverse of our confidence score.
+        # Low confidence means high risk.
+        base_risk = round(1.0 - confidence, 4)
 
-    # Add risk based on the type of discrepancy found during the audit.
-    discrepancy_boost = DISCREPANCY_RISK.get(discrepancy, 0.2)
+        # Add risk based on the type of discrepancy found during the audit.
+        discrepancy_boost = DISCREPANCY_RISK.get(discrepancy, 0.2)
 
-    # A larger financial impact (positive or negative) increases the risk.
-    delta_boost = min(delta / 5000.0, 0.2)
+        # A larger financial impact (positive or negative) increases the risk.
+        delta_boost = min(delta / 5000.0, 0.2)
 
-    # Missing or overcoding a DRG-related code (MCC/CC) significantly increases risk.
-    if drg_flag == "MCC_MISSED":
-        mcc_boost = 0.20
-    elif drg_flag in ("CC_MISSED", "MCC_OVERCODED"):
-        mcc_boost = 0.15
-    elif is_mcc:
-        mcc_boost = 0.10
-    else:
-        mcc_boost = 0.0
+        # Missing or overcoding a DRG-related code (MCC/CC) significantly increases risk.
+        if drg_flag == "MCC_MISSED":
+            mcc_boost = 0.20
+        elif drg_flag in ("CC_MISSED", "MCC_OVERCODED"):
+            mcc_boost = 0.15
+        elif is_mcc:
+            mcc_boost = 0.10
+        else:
+            mcc_boost = 0.0
 
-    # Combine all the factors into a final score.
-    raw_score = base_risk * 0.4 + discrepancy_boost * 0.4 + delta_boost * 0.1 + mcc_boost * 0.1
-    score = round(min(raw_score, 1.0), 4)
+        # Combine all the factors into a final score.
+        raw_score = base_risk * 0.4 + discrepancy_boost * 0.4 + delta_boost * 0.1 + mcc_boost * 0.1
+        score = round(min(raw_score, 1.0), 4)
 
-    # Assign a simple label based on the score.
-    label = "LOW" if score < 0.35 else ("MEDIUM" if score <= 0.70 else "HIGH")
-    return score, label
+        # Assign a simple label based on the score.
+        label = "LOW" if score < 0.35 else ("MEDIUM" if score <= 0.70 else "HIGH")
+        return score, label
+    except Exception as e:
+        log.error("Error in risk_scoring node: %s", str(e))
+        state["risk_score"] = 0.0  # Default value
+        state["risk_label"] = "LOW"
 
 
 @safe_node("risk_scoring")

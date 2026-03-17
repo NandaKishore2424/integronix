@@ -18,15 +18,16 @@ async def snomed_icd_mapping_node(state: CodingState) -> CodingState:
     # mapping from the SNOMED code we found to an ICD-10 code.
     session_id = str(state.get("session_id", ""))
 
-    # ── WHO ICD API fast-path: skip this node entirely ────────────────────────
-    # If the WHO ICD API already populated candidate_icd_codes in Node 3,
-    # this crosswalk step is redundant—the WHO API IS the crosswalk.
-    if state.get("who_icd_candidates"):
+    # ── Fast-path: skip if candidates already populated ─────────────────────
+    # WHO ICD API (Node 3) sets candidate_icd_codes directly. Check that key
+    # (declared in CodingState, always preserved by LangGraph) rather than
+    # who_icd_candidates which is an undeclared key and may be stripped.
+    if state.get("candidate_icd_codes"):
         log.info(
             "snomed_icd_map_skipped",
             session_id=session_id,
-            reason="who_api_candidates_already_present",
-            candidate_count=len(state["who_icd_candidates"]),
+            reason="candidates_already_populated",
+            candidate_count=len(state["candidate_icd_codes"]),
         )
         return state
 
@@ -39,9 +40,12 @@ async def snomed_icd_mapping_node(state: CodingState) -> CodingState:
             session_id=session_id,
             reason="no resolved_snomed_code in state",
         )
-        state["mapping_path"] = "no_snomed"
-        state["candidate_icd_codes"] = []
-        state["direct_mapped_icd"] = None
+        # IMPORTANT: do NOT clear candidate_icd_codes — it may contain WHO API results
+        # that the early-exit check above missed (defensive guard)
+        if not state.get("candidate_icd_codes"):
+            state["mapping_path"] = "no_snomed"
+            state["candidate_icd_codes"] = []
+            state["direct_mapped_icd"] = None
         return state
 
     # We query our 'snomed_icd_map' table, which contains pre-calculated

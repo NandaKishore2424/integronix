@@ -35,6 +35,39 @@ NEGATION_PHRASES = [
     "without chronic", "no chronic",
 ]
 
+# Add a dictionary for "Gold Standard" keyword-to-code mappings
+GOLD_STANDARD_KEYWORDS = {
+    "nstemi": "I21.4",
+    "non-st elevation": "I21.4",
+    "stemi": "I21.3",  # Location-specific logic can be added if needed
+    "acute systolic heart failure": "I50.21",
+    "acute on chronic systolic heart failure": "I50.23",
+}
+
+# Add a function to penalize unspecified codes
+def _penalize_unspecified_codes(candidates: list, raw_text: str) -> list:
+    """
+    Penalize codes ending in .9, .90, or .0 if specific descriptors are present in the clinical text.
+    """
+    for candidate in candidates:
+        code = candidate.get("code", "")
+        description = candidate.get("description", "").lower()
+        if code.endswith(".9") or code.endswith(".90") or code.endswith(".0"):
+            if any(keyword in raw_text.lower() for keyword in GOLD_STANDARD_KEYWORDS.keys()):
+                candidate["final_score"] -= 0.3  # Apply penalty for unspecified codes
+    return candidates
+
+# Add a function to handle "Gold Standard" keyword matches
+def _apply_gold_standard_keywords(candidates: list, raw_text: str) -> list:
+    """
+    Check for Gold Standard keywords in the clinical text and prioritize exact matches.
+    """
+    for candidate in candidates:
+        for keyword, exact_code in GOLD_STANDARD_KEYWORDS.items():
+            if keyword in raw_text.lower():
+                if candidate.get("code") == exact_code:
+                    candidate["final_score"] = 0.98  # Set high confidence for exact matches
+    return sorted(candidates, key=lambda x: x["final_score"], reverse=True)
 
 def _kw_match(text: str, keywords: list) -> bool:
     # A helper function to check if any keywords are in the text.
@@ -116,20 +149,24 @@ def _final_score(candidate: dict, entities: dict, raw_text: str = "") -> float:
     Weighted composite:
       confidence (40%) + specificity (30%) + consistency (20%) + combination (10%) - negation penalty
     """
-    confidence   = float(candidate.get("confidence", 0.85))
-    specificity  = _specificity_score(candidate, entities)
-    consistency  = _clinical_consistency_score(candidate, entities)
-    combination  = _combination_code_priority(candidate)
-    negation     = _negation_penalty(candidate, entities, raw_text)
+    try:
+        confidence   = float(candidate.get("confidence", 0.85))
+        specificity  = _specificity_score(candidate, entities)
+        consistency  = _clinical_consistency_score(candidate, entities)
+        combination  = _combination_code_priority(candidate)
+        negation     = _negation_penalty(candidate, entities, raw_text)
 
-    score = (
-        confidence  * 0.40 +
-        specificity * 0.30 +
-        consistency * 0.20 +
-        combination * 0.10 +
-        negation
-    )
-    return round(max(0.0, min(score, 1.0)), 4)
+        score = (
+            confidence  * 0.40 +
+            specificity * 0.30 +
+            consistency * 0.20 +
+            combination * 0.10 +
+            negation
+        )
+        return round(max(0.0, min(score, 1.0)), 4)
+    except Exception as e:
+        log.error("final_score_error", error=str(e), candidate=candidate)
+        return 0.0  # Default to 0.0 if scoring fails
 
 
 # Add a function to prioritize codes based on clinical keywords
@@ -174,15 +211,21 @@ async def icd_decision_node(state: CodingState) -> CodingState:
         state["icd_codes"]        = []
         return state
 
-    # ── Score every candidate ───────────────────────────────────────────────
+    # ── Score every candidate FIRST ─────────────────────────────────────────
+    # NOTE: _apply_gold_standard_keywords and _penalize_unspecified_codes both
+    # read candidate["final_score"], so they MUST run after this loop.
     scored = []
     for c in candidates:
         score = _final_score(c, entities, raw_text)
         scored.append({**c, "final_score": score})
 
-    # Apply keyword-aware re-ranking
-    scored = _rank_by_specificity(scored, raw_text)
+    # ── Apply Gold Standard Keyword Matching (requires final_score set) ──────
+    scored = _apply_gold_standard_keywords(scored, raw_text)
 
+    # ── Penalize Unspecified Codes (requires final_score set) ────────────────
+    scored = _penalize_unspecified_codes(scored, raw_text)
+
+    scored.sort(key=lambda x: x["final_score"], reverse=True)
     winner = scored[0]
 
     state["final_icd_code"]      = winner["code"]
@@ -253,3 +296,19 @@ async def icd_decision_node(state: CodingState) -> CodingState:
         runner_up=scored[1]["code"] if len(scored) > 1 else None,
     )
     return state
+
+def _finalize_decision(state):
+    try:
+        candidates = state.get("candidate_icd_codes", [])  # Ensure candidates is defined
+        if not candidates:
+            raise ValueError("No candidates available for decision.")
+
+        best_candidate = max(candidates, key=lambda c: c.get("final_score", 0))  # Ensure best_candidate is defined
+        state["final_score"] = best_candidate.get("final_score", 0.0)
+        state["final_icd_code"] = best_candidate.get("code", "UNKNOWN")
+        state["confidence_score"] = best_candidate.get("confidence", 0.0)
+    except Exception as e:
+        log.error("Error in icd_decision node: %s", str(e))
+        state["final_score"] = 0.0  # Default value
+        state["final_icd_code"] = "UNKNOWN"
+        state["confidence_score"] = 0.0

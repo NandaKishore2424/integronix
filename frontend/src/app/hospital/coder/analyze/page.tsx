@@ -23,6 +23,7 @@ export default function AnalyzePage() {
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [stageIdx, setStageIdx] = useState(0);
+    const [orgId, setOrgId] = useState<string>('00000000-0000-0000-0000-000000000001'); // Default to City General
     // FIX FE-BUG-006: Store interval ref at component scope so unmount cleanup can clear it
     const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -41,7 +42,11 @@ export default function AnalyzePage() {
         let i = 0;
         intervalRef.current = setInterval(() => { i++; setStageIdx(i); }, 1200);
         try {
-            const data = await runCodingPipeline({ raw_text: text, human_icd_code: humanCode });
+            const data = await runCodingPipeline({ 
+                raw_text: text, 
+                human_icd_code: humanCode,
+                org_id: orgId
+            });
             setResult(data);
             setActiveTab('results');
         } catch (err) {
@@ -58,7 +63,7 @@ export default function AnalyzePage() {
         let i = 0;
         intervalRef.current = setInterval(() => { i++; setStageIdx(i); }, 1200);
         try {
-            const data = await runPdfPipeline(file, humanCode);
+            const data = await runPdfPipeline(file, humanCode, orgId);
             setResult(data);
             setActiveTab('results');
         } catch (err) {
@@ -143,6 +148,19 @@ export default function AnalyzePage() {
                             </span>
                         </button>
                     )}
+                </div>
+                
+                {/* Demo Hospital Selector */}
+                <div className="flex items-center gap-3 px-3 py-1 bg-indigo-500/5 rounded-lg border border-indigo-500/10">
+                    <span className="text-[10px] font-mono text-indigo-400 uppercase tracking-widest font-bold">Demo Context:</span>
+                    <select 
+                        value={orgId} 
+                        onChange={(e) => setOrgId(e.target.value)}
+                        className="bg-transparent text-xs font-medium text-slate-300 focus:outline-none cursor-pointer hover:text-white transition-colors"
+                    >
+                        <option value="00000000-0000-0000-0000-000000000001">🏥 City General (1.2x)</option>
+                        <option value="00000000-0000-0000-0000-000000000002">💎 Premium Care (1.8x)</option>
+                    </select>
                 </div>
             </div>
 

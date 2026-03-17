@@ -22,6 +22,7 @@ export async function runCodingPipeline(params: PipelineRequest): Promise<CodeRe
         body: JSON.stringify({
             raw_text: params.raw_text.trim(),
             human_icd_code: params.human_icd_code?.trim() || null,
+            org_id: params.org_id || null,
         }),
     });
 
@@ -33,14 +34,15 @@ export async function runCodingPipeline(params: PipelineRequest): Promise<CodeRe
     return res.json() as Promise<CodeResponse>;
 }
 
-/** POST /api/v1/code/run-pdf — accepts multipart/form-data (PDF file) */
 export async function runPdfPipeline(
     file: File,
     humanCode?: string | null,
+    orgId?: string | null,
 ): Promise<CodeResponse> {
     const form = new FormData();
     form.append('file', file);
     if (humanCode?.trim()) form.append('human_icd_code', humanCode.trim().toUpperCase());
+    if (orgId) form.append('org_id', orgId);
 
     // Do NOT set Content-Type — browser adds multipart boundary automatically
     const res = await fetch(`${API_BASE}/api/v1/code/run-pdf`, {
@@ -138,3 +140,117 @@ export async function fetchDiscrepancyBreakdown(): Promise<DiscrepancyPoint[]> {
 }
 
 export { fetchAnalyticsOverview as getAnalyticsOverview, fetchTopCodes as getTopCodes };
+
+// ── Phase 7: RCM Claims Integration ─────────────────────────────────────────
+
+export interface Payer {
+    id: string;
+    name: string;
+    payer_type: string;
+    base_allowed_multiplier: number;
+}
+
+export interface Claim {
+    id: string;
+    session_id: string;
+    patient_name: string;
+    status: string;
+    total_billed_amount: number;
+    total_allowed_amount: number;
+    total_paid_amount: number;
+    patient_responsibility: number;
+    created_at: string;
+    payers?: { name: string };
+    claim_audit_logs?: Array<{
+        id: string;
+        previous_status: string | null;
+        new_status: string;
+        action_notes: string | null;
+        created_at: string;
+    }>;
+}
+
+export async function fetchPayers(): Promise<Payer[]> {
+    const res = await fetch(`${API_BASE}/api/v1/claims/payers`);
+    if (!res.ok) {
+        const err = await res.json().catch(() => ({ detail: 'Unknown error' }));
+        throw new ApiError(res.status, err.detail ?? `HTTP ${res.status}`);
+    }
+    const data = await res.json();
+    return data.payers as Payer[];
+}
+
+export async function submitClaim(payload: any): Promise<{ claim_id: string }> {
+    const res = await fetch(`${API_BASE}/api/v1/claims/submit`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+    });
+
+    if (!res.ok) {
+        const err = await res.json().catch(() => ({ detail: 'Unknown error' }));
+        throw new ApiError(res.status, err.detail ?? `HTTP ${res.status}`);
+    }
+
+    return res.json();
+}
+
+export async function fetchClaims(orgId: string): Promise<Claim[]> {
+    const res = await fetch(`${API_BASE}/api/v1/claims/organization/${orgId}`);
+    if (!res.ok) {
+        const err = await res.json().catch(() => ({ detail: 'Unknown error' }));
+        throw new ApiError(res.status, err.detail ?? `HTTP ${res.status}`);
+    }
+    const data = await res.json();
+    return data.claims as Claim[];
+}
+
+export async function fetchPayerClaims(payerId: string): Promise<Claim[]> {
+    const res = await fetch(`${API_BASE}/api/v1/claims/payer/${payerId}`);
+    if (!res.ok) {
+        const err = await res.json().catch(() => ({ detail: 'Unknown error' }));
+        throw new ApiError(res.status, err.detail ?? `HTTP ${res.status}`);
+    }
+    const data = await res.json();
+    return data.claims as Claim[];
+}
+
+export async function fetchClaimDetail(claimId: string): Promise<Claim> {
+    const res = await fetch(`${API_BASE}/api/v1/claims/detail/${claimId}`);
+    if (!res.ok) {
+        const err = await res.json().catch(() => ({ detail: 'Unknown error' }));
+        throw new ApiError(res.status, err.detail ?? `HTTP ${res.status}`);
+    }
+    const data = await res.json();
+    return data.claim as Claim;
+}
+
+export async function adjudicateClaim(claimId: string, payload: { action: 'APPROVE' | 'DENY'; payer_responsibility_pct: number; denial_reason?: string }): Promise<any> {
+    const res = await fetch(`${API_BASE}/api/v1/claims/adjudicate/${claimId}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+    });
+    if (!res.ok) {
+        const err = await res.json().catch(() => ({ detail: 'Unknown error' }));
+        throw new ApiError(res.status, err.detail ?? `HTTP ${res.status}`);
+    }
+    return res.json();
+}
+
+export async function appealClaim(claimId: string, justification: string): Promise<any> {
+    const res = await fetch(`${API_BASE}/api/v1/claims/appeal/${claimId}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ justification }),
+    });
+    if (!res.ok) {
+        const err = await res.json().catch(() => ({ detail: 'Unknown error' }));
+        throw new ApiError(res.status, err.detail ?? `HTTP ${res.status}`);
+    }
+    return res.json();
+}
+
+export function exportEdiUrl(claimId: string): string {
+    return `${API_BASE}/api/v1/claims/export/edi/${claimId}`;
+}

@@ -16,6 +16,10 @@ import time
 from typing import Any
 
 
+# Define the logger at the top of the file
+log = logging.getLogger("backend_logger")
+
+
 class JSONFormatter(logging.Formatter):
     """Formats log records as single-line JSON."""
 
@@ -75,13 +79,16 @@ def get_logger(name: str) -> StructuredLogger:
 class Timer:
     """Context manager to measure and log latency."""
 
-    def __init__(self):
+    def __init__(self, name: str = "Timer"):
+        self.name = name
         self._start: float = 0.0
         self.elapsed_ms: int = 0
 
     def __enter__(self):
         self._start = time.perf_counter()
+        log.info("%s started.", self.name)
         return self
 
     def __exit__(self, *args):
         self.elapsed_ms = int((time.perf_counter() - self._start) * 1000)
+        log.info("%s completed in %d ms.", self.name, self.elapsed_ms)
