@@ -1,5 +1,6 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from services.icd_service import get_icd_by_code, get_snomed_mappings
+from services.icd_provider import get_icd_results
 
 router = APIRouter(prefix="/icd", tags=["ICD"])
 
@@ -24,3 +25,16 @@ async def fetch_snomed_icd_mappings(snomed_code: str):
             detail=f"No ICD-10 mappings found for SNOMED code '{snomed_code}'",
         )
     return {"snomed_code": snomed_code, "mappings": results}
+
+
+@router.get(
+    "/search",
+    summary="Search ICD codes with routing (ICD-10 or ICD-11)",
+)
+async def search_icd(
+    q: str = Query(..., description="Search query"),
+    org_id: str = Query(..., description="Organization ID"),
+    limit: int = Query(10, ge=1, le=10, description="Max results"),
+):
+    results = await get_icd_results(q, org_id, limit=limit)
+    return {"query": q, "org_id": org_id, "results": results}

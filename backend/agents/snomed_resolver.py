@@ -28,6 +28,10 @@ async def snomed_resolver_node(state: CodingState) -> CodingState:
     entities     = state.get("structured_entities", {})
     diagnoses    = entities.get("diagnoses", [])
     icd_version  = state.get("icd_version", "ICD-11")   # set by code router from org_settings
+    claim_scheme = state.get("claim_scheme")
+    use_who_api = bool(
+        (claim_scheme in {"ayushman", "cghs"}) or (icd_version == "ICD-11")
+    )
 
     if not diagnoses:
         state["resolved_snomed_code"]      = None
@@ -38,68 +42,78 @@ async def snomed_resolver_node(state: CodingState) -> CodingState:
     primary_diagnosis = diagnoses[0]
     diagnosis_text    = primary_diagnosis.get("text", "").strip()
 
-    # ── PATH 1: WHO ICD API (primary — authoritative, always current) ─────────
-    log.info(
-        "who_icd_search_start",
-        session_id=session_id,
-        query=diagnosis_text[:80],
-        version=icd_version,
-    )
-
-    who_results = await search_icd(
-        query=diagnosis_text,
-        icd_version=icd_version,
-        limit=10,
-    )
-
-    if who_results:
-        # Enrich with CC/MCC flags + base_reimbursement from local cache
-        who_results = await enrich_with_local_flags(who_results)
-
-        # Store all WHO candidates in state for Node 6 (decision engine)
-        state["who_icd_candidates"]       = who_results
-        state["mapping_path"]             = f"who_api_{icd_version.lower().replace('-', '')}"
-        state["resolved_snomed_code"]     = None          # Not needed — WHO skips SNOMED
-        state["resolved_snomed_desc"]     = None
-        state["snomed_resolution_method"] = f"who_api_{icd_version}"
-
-        # Pre-populate candidate_icd_codes in the format Node 4/5 would have produced
-        # This lets Node 6 (icd_decision_engine) work unchanged
-        state["candidate_icd_codes"] = [
-            {
-                "code":               r["code"],
-                "description":        r["description"],
-                "is_billable":        True,
-                "is_cc":              r.get("is_cc", False),
-                "is_mcc":             r.get("is_mcc", False),
-                "base_reimbursement": r.get("base_reimbursement", 5000.0),
-                "icd_version":        r["icd_version"],
-                "mapping_type":       r["mapping_type"],
-                "confidence":         r["score"],
-                "is_primary":         True if r == who_results[0] else False,
-                "source":             "who_icd_api",
-                "similarity_score":   r["score"],
-            }
-            for r in who_results
-        ]
-        state["direct_mapped_icd"] = who_results[0]["code"]
-
+    # ── PATH 1: WHO ICD API (ICD-11 only) ─────────────────────────────────────
+    if use_who_api:
         log.info(
-            "who_icd_candidates_ready",
+            "who_icd_search_start",
             session_id=session_id,
-            top_code=who_results[0]["code"],
-            top_title=who_results[0]["description"][:60],
-            total=len(who_results),
+            query=diagnosis_text[:80],
             version=icd_version,
         )
-        return state
+
+        who_results = await search_icd(
+            query=diagnosis_text,
+            icd_version=icd_version,
+            limit=10,
+        )
+
+        if who_results:
+            # Enrich with CC/MCC flags + base_reimbursement from local cache
+            who_results = await enrich_with_local_flags(who_results)
+
+            # Store all WHO candidates in state for Node 6 (decision engine)
+            state["who_icd_candidates"]       = who_results
+            state["mapping_path"]             = f"who_api_{icd_version.lower().replace('-', '')}"
+            state["resolved_snomed_code"]     = None          # Not needed — WHO skips SNOMED
+            state["resolved_snomed_desc"]     = None
+            state["snomed_resolution_method"] = f"who_api_{icd_version}"
+
+            # Pre-populate candidate_icd_codes in the format Node 4/5 would have produced
+            # This lets Node 6 (icd_decision_engine) work unchanged
+            state["candidate_icd_codes"] = [
+                {
+                    "code":               r["code"],
+                    "description":        r["description"],
+                    "is_billable":        True,
+                    "is_cc":              r.get("is_cc", False),
+                    "is_mcc":             r.get("is_mcc", False),
+                    "base_reimbursement": r.get("base_reimbursement", 5000.0),
+                    "icd_version":        r["icd_version"],
+                    "mapping_type":       r["mapping_type"],
+                    "confidence":         r["score"],
+                    "is_primary":         True if r == who_results[0] else False,
+                    "source":             "who_icd_api",
+                    "similarity_score":   r["score"],
+                }
+                for r in who_results
+            ]
+            state["direct_mapped_icd"] = who_results[0]["code"]
+
+            log.info(
+                "who_icd_candidates_ready",
+                session_id=session_id,
+                top_code=who_results[0]["code"],
+                top_title=who_results[0]["description"][:60],
+                total=len(who_results),
+                version=icd_version,
+            )
+            return state
+    else:
+        log.info(
+            "who_icd_skipped",
+            session_id=session_id,
+            reason="icd10_routing",
+            version=icd_version,
+            claim_scheme=claim_scheme,
+        )
 
     # ── PATH 2: SNOMED fallback (original logic — runs when WHO API returns 0) ─
-    log.warning(
-        "who_icd_empty_falling_back_to_snomed",
-        session_id=session_id,
-        query=diagnosis_text[:60],
-    )
+    if use_who_api:
+        log.warning(
+            "who_icd_empty_falling_back_to_snomed",
+            session_id=session_id,
+            query=diagnosis_text[:60],
+        )
     state["who_icd_candidates"] = []
 
     # Try LLM-suggested SNOMED code first

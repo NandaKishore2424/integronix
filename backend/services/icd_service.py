@@ -1,4 +1,5 @@
 from database import select, select_one
+import re
 
 
 async def get_icd_by_code(code: str) -> dict | None:
@@ -28,14 +29,88 @@ async def get_snomed_mappings(snomed_code: str) -> list[dict]:
     return results
 
 
-async def search_icd_by_text(query_text: str, limit: int = 5) -> list[dict]:
-    rows = await select(
+async def search_icd_by_text(query_text: str, limit: int = 10) -> list[dict]:
+    query_text = (query_text or "").strip()
+    if not query_text:
+        return []
+
+    normalized = _normalize_query(query_text)
+    tokens = [t for t in normalized.split() if len(t) >= 3]
+
+    index_rows = await _search_index_terms(normalized, tokens)
+    code_scores: dict[str, float] = {}
+    for row in index_rows:
+        code = row.get("code")
+        term = row.get("normalized_term") or ""
+        if not code:
+            continue
+        if term == normalized:
+            score = 1.0
+        else:
+            score = 0.8
+        code_scores[code] = max(code_scores.get(code, 0.0), score)
+
+    if code_scores:
+        codes = sorted(set(code_scores.keys()))
+        icd_rows = await _fetch_icd_codes_by_codes(codes)
+        results = []
+        for row in icd_rows:
+            code = row.get("code")
+            score = code_scores.get(code, 0.8)
+            results.append({**row, "score": score})
+        return _sort_results(results, limit)
+
+    # Fallback: description search
+    desc_rows = await select(
         table="icd_codes",
-        query="code,description,is_cc,is_mcc,base_reimbursement",
+        query="code,description,is_billable,is_cc,is_mcc,base_reimbursement",
         filters={
-            "is_billable": "eq.true",
             "description": f"ilike.*{query_text}*",
             "limit": limit,
         },
     )
-    return [{**r, "similarity_score": 0.5, "source": "text_search"} for r in rows]
+    results = [{**r, "score": 0.5} for r in desc_rows]
+    return _sort_results(results, limit)
+
+
+def _normalize_query(text: str) -> str:
+    text = text.lower()
+    text = re.sub(r"[^a-z0-9\s]+", " ", text)
+    return re.sub(r"\s+", " ", text).strip()
+
+
+async def _search_index_terms(normalized: str, tokens: list[str]) -> list[dict]:
+    or_parts = [f"normalized_term.ilike.*{normalized}*"] if normalized else []
+    or_parts.extend([f"normalized_term.ilike.*{t}*" for t in tokens])
+    if not or_parts:
+        return []
+
+    return await select(
+        table="icd_index_terms",
+        query="term,normalized_term,code",
+        filters={
+            "or": f"({','.join(or_parts)})",
+            "limit": 20,
+        },
+    )
+
+
+async def _fetch_icd_codes_by_codes(codes: list[str]) -> list[dict]:
+    if not codes:
+        return []
+    code_list = ",".join(codes)
+    return await select(
+        table="icd_codes",
+        query="code,description,is_billable,is_cc,is_mcc,base_reimbursement",
+        filters={"code": f"in.({code_list})"},
+    )
+
+
+def _sort_results(results: list[dict], limit: int) -> list[dict]:
+    results.sort(
+        key=lambda r: (
+            -(float(r.get("score") or 0.0)),
+            len((r.get("description") or "")),
+        )
+    )
+    return results[:limit]

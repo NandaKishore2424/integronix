@@ -140,6 +140,7 @@ class CodeResponse(BaseModel):
     fhir_condition:       Optional[dict] = None
     error_at:             Optional[str] = None
     financial_summary:    Optional[dict] = None  # RCM financial breakdown
+    decision_trace:       Optional[dict] = None
     # Document source tracking (Phase 6A)
     document_source:      Optional[str] = None  # "text_input" | "pdf_upload"
     ocr_used:             Optional[bool] = None
