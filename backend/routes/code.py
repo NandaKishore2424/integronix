@@ -21,6 +21,7 @@ from agents.graph import build_integronix_graph, CodingState
 from models import CodeRequest, CodeResponse
 from config import settings
 from logger import get_logger
+from services.org_settings_service import get_org_settings
 
 log = get_logger(__name__)
 
@@ -136,6 +137,7 @@ async def _run_pipeline(initial_state: CodingState, session_id: str) -> CodeResp
         fhir_condition=_build_fhir_condition(icd_codes, session_id),
         error_at=result.get("error_at"),
         financial_summary=result.get("financial_summary"),
+        decision_trace=result.get("decision_trace"),
         document_source=result.get("document_source", "text_input"),
         ocr_used=result.get("ocr_used", False),
     )
@@ -158,13 +160,20 @@ async def run_full_pipeline(body: CodeRequest):
 
     session_id = body.session_id or str(uuid.uuid4())
 
+    org_settings = await get_org_settings(body.org_id) if body.org_id else None
+    icd_version = (org_settings or {}).get("icd_version") or settings.who_icd_default_version
+    claim_scheme = (org_settings or {}).get("claim_scheme")
+    coding_mode = (org_settings or {}).get("coding_mode")
+
     initial_state: CodingState = {
         "session_id":     session_id,
         "raw_text":       body.raw_text.strip(),
         "human_icd_code": body.human_icd_code,
         "pdf_bytes":      None,
         "org_id":         body.org_id,
-        "icd_version":    settings.who_icd_default_version,
+        "icd_version":    icd_version,
+        "claim_scheme":   claim_scheme,
+        "coding_mode":    coding_mode,
     }
 
     log.info(
@@ -187,6 +196,7 @@ async def run_pdf_pipeline(
     file: UploadFile = File(..., description="PDF file — discharge summary, H&P, or progress notes"),
     human_icd_code: Optional[str] = Form(None, description="Existing ICD-10 code for audit comparison"),
     session_id: Optional[str] = Form(None),
+    org_id: Optional[str] = Form(None, description="Organization ID"),
 ):
     """
     Full 8-node LangGraph pipeline — accepts a PDF file via multipart/form-data.
@@ -216,12 +226,20 @@ async def run_pdf_pipeline(
 
     session_id = session_id or str(uuid.uuid4())
 
+    org_settings = await get_org_settings(org_id) if org_id else None
+    icd_version = (org_settings or {}).get("icd_version") or settings.who_icd_default_version
+    claim_scheme = (org_settings or {}).get("claim_scheme")
+    coding_mode = (org_settings or {}).get("coding_mode")
+
     initial_state: CodingState = {
         "session_id":     session_id,
         "pdf_bytes":      pdf_bytes,
         "raw_text":       "",           # Node 1 will populate this from PDF
         "human_icd_code": human_icd_code.strip().upper() if human_icd_code else None,
-        "icd_version":    settings.who_icd_default_version,  # "ICD-11" or "ICD-10"
+        "org_id":         org_id,
+        "icd_version":    icd_version,
+        "claim_scheme":   claim_scheme,
+        "coding_mode":    coding_mode,
     }
 
     log.info(

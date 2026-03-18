@@ -8,6 +8,7 @@ most appropriate code from the candidates.
 from agents.graph import CodingState
 from agents.node_runner import safe_node
 from logger import get_logger
+from services.icd_provider import get_icd_results
 import re
 
 log = get_logger(__name__)
@@ -194,6 +195,19 @@ async def icd_decision_node(state: CodingState) -> CodingState:
     candidates = state.get("candidate_icd_codes", [])
     entities   = state.get("structured_entities", {})
     raw_text   = state.get("raw_text", "")   # for negation detection
+    org_id     = state.get("org_id")
+    provider_used = False
+
+    # ── Provider augmentation (if candidates are missing or thin) ──────────
+    if (not candidates) or len(candidates) < 3:
+        provider_candidates = await _provider_candidates(entities, org_id)
+        if provider_candidates:
+            provider_used = True
+            candidates = _merge_candidates(candidates, provider_candidates)
+            if not state.get("mapping_path"):
+                state["mapping_path"] = "provider_fallback"
+            elif state.get("mapping_path") not in {"provider_fallback", "provider_augmented"}:
+                state["mapping_path"] = "provider_augmented"
 
     # ── Guard: no candidates ────────────────────────────────────────────────
     if not candidates:
@@ -202,6 +216,7 @@ async def icd_decision_node(state: CodingState) -> CodingState:
         state["final_icd_code"]   = "UNKNOWN"
         state["confidence_score"] = 0.0
         state["icd_codes"]        = []
+        state["decision_trace"]   = _decision_trace(state, [], provider_used)
         return state
 
     candidates = [c for c in candidates if c.get("is_billable", True)]
@@ -209,6 +224,7 @@ async def icd_decision_node(state: CodingState) -> CodingState:
         state["final_icd_code"]   = "UNKNOWN"
         state["confidence_score"] = 0.0
         state["icd_codes"]        = []
+        state["decision_trace"]   = _decision_trace(state, [], provider_used)
         return state
 
     # ── Score every candidate FIRST ─────────────────────────────────────────
@@ -284,6 +300,7 @@ async def icd_decision_node(state: CodingState) -> CodingState:
             role_idx += 1
 
     state["icd_codes"] = icd_codes
+    state["decision_trace"] = _decision_trace(state, scored, provider_used)
 
     log.info(
         "icd_selected",
@@ -296,6 +313,87 @@ async def icd_decision_node(state: CodingState) -> CodingState:
         runner_up=scored[1]["code"] if len(scored) > 1 else None,
     )
     return state
+
+
+async def _provider_candidates(entities: dict, org_id: str | None) -> list[dict]:
+    if not org_id:
+        return []
+
+    diagnoses = entities.get("diagnoses", [])
+    texts = []
+    for d in diagnoses:
+        text = (d.get("text") or "").strip()
+        if text:
+            texts.append(text)
+
+    # Use up to 2 unique diagnosis phrases to limit external calls
+    uniq_texts = []
+    for t in texts:
+        if t.lower() not in {u.lower() for u in uniq_texts}:
+            uniq_texts.append(t)
+        if len(uniq_texts) >= 2:
+            break
+
+    results: list[dict] = []
+    for text in uniq_texts:
+        provider_results = await get_icd_results(text, org_id, limit=5)
+        results.extend(provider_results)
+
+    candidates: list[dict] = []
+    for r in results:
+        candidates.append(
+            {
+                "code":               r.get("code"),
+                "description":        r.get("description"),
+                "is_billable":        r.get("is_billable", True),
+                "is_cc":              r.get("is_cc", False),
+                "is_mcc":             r.get("is_mcc", False),
+                "base_reimbursement": r.get("base_reimbursement", 5000.0),
+                "icd_version":        "ICD-11" if r.get("source") == "ICD-11" else "ICD-10",
+                "mapping_type":       "provider",
+                "confidence":         float(r.get("score") or 0.0),
+                "is_primary":         False,
+                "source":             "icd_provider",
+                "similarity_score":   float(r.get("score") or 0.0),
+            }
+        )
+    return candidates
+
+
+def _merge_candidates(existing: list[dict], additional: list[dict]) -> list[dict]:
+    merged: dict[str, dict] = {}
+    for c in existing:
+        code = c.get("code")
+        if code:
+            merged[code] = c
+    for c in additional:
+        code = c.get("code")
+        if not code:
+            continue
+        if code not in merged:
+            merged[code] = c
+        else:
+            existing_conf = float(merged[code].get("confidence") or 0.0)
+            new_conf = float(c.get("confidence") or 0.0)
+            if new_conf > existing_conf:
+                merged[code] = {**merged[code], **c}
+    return list(merged.values())
+
+
+def _decision_trace(state: CodingState, candidates: list[dict], provider_used: bool) -> dict:
+    mapping_path = state.get("mapping_path")
+    used_snomed = bool(state.get("resolved_snomed_code")) or mapping_path in {"direct", "embedding"}
+    used_icd11 = any((c.get("icd_version") == "ICD-11") for c in candidates) or (
+        isinstance(mapping_path, str) and mapping_path.startswith("who_api")
+    )
+    used_icd10 = any(("ICD-10" in str(c.get("icd_version"))) for c in candidates)
+    return {
+        "used_snomed": used_snomed,
+        "used_icd10": used_icd10,
+        "used_icd11": used_icd11,
+        "fallback_used": provider_used,
+        "coding_mode": state.get("coding_mode"),
+    }
 
 def _finalize_decision(state):
     try:

@@ -319,17 +319,26 @@ async def enrich_with_local_flags(results: list[dict]) -> list[dict]:
     """
     if not results:
         return results
-    from database import select_one
+    from database import select
+
+    codes = [r.get("code") for r in results if r.get("code")]
+    if not codes:
+        return results
+
+    code_list = ",".join(sorted(set(codes)))
+    local_rows = await select(
+        table="icd_codes",
+        query="code,is_cc,is_mcc,base_reimbursement",
+        filters={"code": f"in.({code_list})"},
+    )
+    local_map = {row["code"]: row for row in local_rows}
+
     for r in results:
-        local = await select_one(
-            table="icd_codes",
-            query="is_cc,is_mcc,base_reimbursement",
-            filters={"code": f"eq.{r['code']}"},
-        )
+        local = local_map.get(r.get("code"))
         if local:
-            r["is_cc"]             = local.get("is_cc", False)
-            r["is_mcc"]            = local.get("is_mcc", False)
+            r["is_cc"] = local.get("is_cc", False)
+            r["is_mcc"] = local.get("is_mcc", False)
             r["base_reimbursement"] = float(local.get("base_reimbursement", 5000.0))
         else:
-            r["base_reimbursement"] = 5000.0  # Default until DB cache is warm
+            r["base_reimbursement"] = 5000.0
     return results

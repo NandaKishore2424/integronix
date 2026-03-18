@@ -18,6 +18,9 @@ class CodingState(TypedDict, total=False):
     # --- Input Data ---
     session_id: str
     org_id: Optional[str]           # Organization ID for pricing multiplier lookup
+    icd_version: Optional[str]      # ICD-10 | ICD-11 (from org_settings)
+    claim_scheme: Optional[str]     # ayushman | cghs | etc (from org_settings)
+    coding_mode: Optional[str]      # aggressive | balanced | conservative
     pdf_bytes: Optional[bytes]
     human_icd_code: Optional[str] # The code entered by a human for comparison
 
@@ -40,6 +43,7 @@ class CodingState(TypedDict, total=False):
     confidence_score: float
     icd_codes: List[dict]
     cpt_codes: List[dict]           # Output from CPT Node (semantic matches)
+    decision_trace: Optional[dict]  # Trace of decision signals and routing
 
     # --- Audit & Risk Analysis ---
     discrepancy_type: Optional[str] # Output from Node 7
