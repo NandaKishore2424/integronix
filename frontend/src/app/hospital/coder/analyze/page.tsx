@@ -175,7 +175,7 @@ export default function AnalyzePage() {
                         />
                     )}
                     {activeTab === 'results' && result && (
-                        <ResultsPanel result={result} onReanalyze={handleReanalyze} />
+                        <ResultsPanel result={result} onReanalyze={handleReanalyze} orgId={orgId ?? undefined} />
                     )}
                 </div>
             </div>

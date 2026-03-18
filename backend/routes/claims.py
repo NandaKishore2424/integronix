@@ -1,9 +1,9 @@
 from fastapi import APIRouter, HTTPException, Depends, Header
 from pydantic import BaseModel
 from typing import Optional, List, Any
-import os
 from supabase import create_client, Client
 from logger import get_logger
+from config import settings
 from services.rules_engine import evaluate_claim
 
 log = get_logger(__name__)
@@ -11,11 +11,8 @@ router = APIRouter(prefix="/claims", tags=["claims"])
 
 def get_supabase(authorization: Optional[str] = Header(None)) -> Client:
     """Gets a service-role supabase client to interact with the claims db."""
-    url = os.getenv("SUPABASE_URL", "")
-    key = os.getenv("SUPABASE_SERVICE_KEY", "")
-    
-    # Ideally we should initialize with the user's JWT from authorization header
-    # But for this POC backend we use service_role to bypass RLS or simulate backend actions
+    url = settings.supabase_url
+    key = settings.supabase_service_key or settings.supabase_anon_key
     return create_client(url, key)
 
 class ClaimSubmissionRequest(BaseModel):
@@ -167,6 +164,40 @@ async def list_payers():
         return {"payers": []}
     except Exception as e:
         raise HTTPException(status_code=500, detail="Failed to fetch payers.")
+
+@router.get("/payers/by-org/{org_id}")
+async def get_payer_for_org(org_id: str):
+    """
+    Resolves the payer record for a given organization by name-matching.
+    Example: Nathin is in 'Global Health Insurance' org -> matches the
+    'Global Health Insurance' payer record so inbox shows only his claims.
+    """
+    supabase = get_supabase()
+    try:
+        org_res = getattr(
+            supabase.table("organizations").select("name").eq("id", org_id).single(),
+            "execute"
+        )()
+        if not org_res or not org_res.data:
+            raise HTTPException(status_code=404, detail="Organization not found")
+        org_name = org_res.data["name"]
+
+        payer_res = getattr(
+            supabase.table("payers")
+            .select("id, name, payer_type, base_allowed_multiplier")
+            .ilike("name", org_name)
+            .limit(1),
+            "execute"
+        )()
+        if payer_res and payer_res.data and len(payer_res.data) > 0:
+            return {"payer": payer_res.data[0]}
+
+        raise HTTPException(status_code=404, detail=f"No payer record found matching org '{org_name}'")
+    except HTTPException:
+        raise
+    except Exception as e:
+        log.error("payer_by_org_failed", org_id=org_id, error=str(e))
+        raise HTTPException(status_code=500, detail="Failed to resolve payer for organization.")
 
 class AdjudicationRequest(BaseModel):
     action: str  # e.g., 'APPROVE', 'DENY'

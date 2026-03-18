@@ -6,10 +6,13 @@ import { ArrowLeft, Loader2, AlertCircle, BarChart3 } from 'lucide-react';
 import { fetchCaseDetail, ApiError } from '@/lib/api';
 import { CodeResponse } from '@/types/coding';
 import ResultsPanel from '@/components/ResultsPanel';
+import { useAuth } from '@/components/AuthProvider';
 
 export default function CaseDetailPage() {
     const { session_id } = useParams<{ session_id: string }>();
     const router         = useRouter();
+    const { orgUser }    = useAuth();
+    const orgId          = orgUser?.organization_id;
 
     const [result, setResult]   = useState<CodeResponse | null>(null);
     const [loading, setLoading] = useState(true);
@@ -70,7 +73,7 @@ export default function CaseDetailPage() {
                     )}
 
                     {!loading && !error && result && (
-                        <ResultsPanel result={result} onReanalyze={() => router.push('/hospital/coder/analyze')} />
+                        <ResultsPanel result={result} onReanalyze={() => router.push('/hospital/coder/analyze')} orgId={orgId} />
                     )}
 
                 </div>

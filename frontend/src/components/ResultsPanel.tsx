@@ -29,7 +29,7 @@ const RESOLUTION_LABELS: Record<MappingPath, { label: string; color: string }> =
     unknown: { label: 'Unresolved', color: 'text-slate-500' },
 };
 
-export default function ResultsPanel({ result, onReanalyze, orgId = '00000000-0000-0000-0000-000000000001' }: Props) {
+export default function ResultsPanel({ result, onReanalyze, orgId }: Props) {
     const delta = result.financial_delta ?? 0;
     const res = RESOLUTION_LABELS[result.mapping_path] ?? RESOLUTION_LABELS['no_mapping'];
 
@@ -49,13 +49,22 @@ export default function ResultsPanel({ result, onReanalyze, orgId = '00000000-00
         if (!selectedPayer) return;
         setIsSubmitting(true);
         try {
+            // CPT-based revenue is preferred. Fall back to ICD base_reimbursement
+            // sum when no CPT codes exist (e.g. diagnosis-only visits) so the
+            // claim is never submitted with a $0 billed amount.
+            const cptRevenue = result.financial_summary?.total_estimated_revenue ?? 0;
+            const icdRevenue = result.icd_codes?.reduce(
+                (sum, c) => sum + (c.base_reimbursement ?? 0), 0
+            ) ?? 0;
+            const billedAmount = cptRevenue > 0 ? cptRevenue : icdRevenue;
+
             await submitClaim({
                 session_id: result.session_id,
                 organization_id: orgId,
                 payer_id: selectedPayer,
                 patient_name: ((result.fhir_condition?.subject as any)?.display) ?? 'John Doe', // Simulated patient for the demo
                 patient_dob: '1980-01-01', // Simulated
-                total_billed_amount: result.financial_summary?.total_estimated_revenue ?? 0,
+                total_billed_amount: billedAmount,
                 claim_data: result as any
             });
             setSubmitSuccess(true);
