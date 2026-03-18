@@ -10,7 +10,7 @@ export default function ForbiddenPage() {
     // Redirect path based on role – takes them back to their rightful home
     const homeHref =
         orgUser?.role === 'payer' ? '/payer/inbox' :
-        orgUser?.role === 'rcm'   ? '/hospital/rcm/claims' :
+        orgUser?.role === 'rcm'   ? '/hospital/rcm/inbox' :
         '/hospital/coder/analyze';
 
     return (

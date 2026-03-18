@@ -183,6 +183,18 @@ export async function fetchPayers(): Promise<Payer[]> {
     return data.payers as Payer[];
 }
 
+/** GET /api/v1/claims/payers/by-org/{orgId} — resolves the payer record for the logged-in user's org */
+export async function fetchPayerByOrg(orgId: string): Promise<Payer | null> {
+    const res = await fetch(`${API_BASE}/api/v1/claims/payers/by-org/${orgId}`);
+    if (res.status === 404) return null;
+    if (!res.ok) {
+        const err = await res.json().catch(() => ({ detail: 'Unknown error' }));
+        throw new ApiError(res.status, err.detail ?? `HTTP ${res.status}`);
+    }
+    const data = await res.json();
+    return data.payer as Payer;
+}
+
 export async function submitClaim(payload: any): Promise<{ claim_id: string }> {
     const res = await fetch(`${API_BASE}/api/v1/claims/submit`, {
         method: 'POST',

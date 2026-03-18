@@ -6,15 +6,14 @@ the CPT resolver has identified the billing codes. Its job is to:
   1. Look up the hospital's specific pricing multiplier from org_settings.
   2. Apply that multiplier to each resolved CPT base price.
   3. Calculate the total estimated gross hospital revenue for this patient visit.
+  4. Falls back to ICD code base_reimbursement values when CPT codes are absent.
 """
-import os
-from dotenv import load_dotenv
 from supabase import create_client, Client
 from agents.graph import CodingState
 from agents.node_runner import safe_node
 from logger import get_logger
+from config import settings
 
-load_dotenv()
 log = get_logger(__name__)
 
 # Default multiplier if org setting cannot be retrieved — represents the national
@@ -51,20 +50,21 @@ async def financial_calculator_node(state: CodingState) -> CodingState:
     session_id = str(state.get("session_id", ""))
     cpt_codes = state.get("cpt_codes", [])
 
-    # If CPT resolver found nothing, there is no revenue to calculate.
+    # If CPT resolver found nothing, fall back to ICD code base_reimbursement values.
+    # This ensures the claim always carries a non-zero billed amount for coded visits.
     if not cpt_codes:
-        log.info("financial_calc_skipped", session_id=session_id, reason="no cpt_codes")
+        icd_codes = state.get("icd_codes", [])
+        icd_total = round(sum(float(c.get("base_reimbursement", 0)) for c in icd_codes), 2)
+        log.info("financial_calc_icd_fallback", session_id=session_id, icd_total=icd_total)
         state["financial_summary"] = {
-            "total_estimated_revenue": 0.0,
+            "total_estimated_revenue": icd_total,
             "pricing_multiplier": DEFAULT_MULTIPLIER,
             "line_items": []
         }
         return state
 
     # Retrieve the org multiplier from the database
-    url = os.getenv("SUPABASE_URL", "")
-    key = os.getenv("SUPABASE_SERVICE_KEY", "")
-    supabase: Client = create_client(url, key)
+    supabase: Client = create_client(settings.supabase_url, settings.supabase_service_key or settings.supabase_anon_key)
 
     # Note: org_id is passed in from the initial request state (added in Phase 3)
     # For now, we look up the FIRST org in settings as a safe demo fallback.

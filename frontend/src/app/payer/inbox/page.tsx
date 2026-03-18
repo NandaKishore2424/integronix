@@ -2,32 +2,35 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { fetchPayers, fetchPayerClaims, Claim, formatCurrency } from '@/lib/api';
-import { Inbox, FileSignature, AlertCircle, RefreshCw, Filter, Building2, Search } from 'lucide-react';
+import { fetchPayerByOrg, fetchPayerClaims, Claim, formatCurrency } from '@/lib/api';
+import { Inbox, FileSignature, AlertCircle, RefreshCw, Building2, Search } from 'lucide-react';
+import { useAuth } from '@/components/AuthProvider';
 
 export default function PayerInboxPage() {
     const router = useRouter();
+    const { orgUser } = useAuth();
     const [claims, setClaims] = useState<Claim[]>([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState('');
     const [filterStatus, setFilterStatus] = useState<string>('SUBMITTED');
 
     useEffect(() => {
-        loadInbox();
-    }, []);
+        if (orgUser?.organization_id) loadInbox();
+    }, [orgUser]);
 
     const loadInbox = async () => {
         setLoading(true);
         setError('');
         try {
-            // For the demo, we assume the logged-in payer represents the first registered payer in the system
-            const payers = await fetchPayers();
-            if (payers.length > 0) {
-                const data = await fetchPayerClaims(payers[0].id);
-                setClaims(data);
-            } else {
-                setError('No payer profiles configured in the system.');
+            // Resolve the payer whose name matches the logged-in user's organization.
+            // Nathin (Global Health Insurance org) → Global Health Insurance payer record.
+            const payer = await fetchPayerByOrg(orgUser!.organization_id);
+            if (!payer) {
+                setError('No payer record found for your organization. Check your account setup.');
+                return;
             }
+            const data = await fetchPayerClaims(payer.id);
+            setClaims(data);
         } catch (err) {
             console.error(err);
             setError('Failed to load payer global inbox. Is the backend running?');

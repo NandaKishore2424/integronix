@@ -23,9 +23,11 @@ export default function LoginPage() {
             if (err) { setError(err.message); return; }
 
             if (data.user) {
-                const { data: userData } = await supabase.from('users').select('*, organizations(name)').eq('id', data.user.id).single();
-                if (userData?.organizations?.name === 'Star Health Insurance') {
+                const { data: userData } = await supabase.from('users').select('*, organizations(name)').eq('auth_id', data.user.id).single();
+                if (userData?.role === 'payer') {
                     router.push('/payer/inbox');
+                } else if (userData?.role === 'rcm') {
+                    router.push('/hospital/rcm/inbox');
                 } else {
                     router.push('/hospital/coder/analyze');
                 }
@@ -54,9 +56,11 @@ export default function LoginPage() {
             if (err) { setError('Demo account not configured. Please sign up first.'); return; }
 
             if (data.user) {
-                const { data: userData } = await supabase.from('users').select('*, organizations(name)').eq('id', data.user.id).single();
-                if (userData?.organizations?.name === 'Star Health Insurance') {
+                const { data: userData } = await supabase.from('users').select('*, organizations(name)').eq('auth_id', data.user.id).single();
+                if (userData?.role === 'payer') {
                     router.push('/payer/inbox');
+                } else if (userData?.role === 'rcm') {
+                    router.push('/hospital/rcm/inbox');
                 } else {
                     router.push('/hospital/coder/analyze');
                 }
