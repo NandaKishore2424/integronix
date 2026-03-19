@@ -1,102 +1,78 @@
-# 24 — Auth, Roles, Tenant Architecture & Demo Setup
+# Authentication, Roles, & Multi-Tenant Architecture
 
-> **Added:** 2026-03-11  
-> **Purpose:** Complete reference for multi-tenant structure, user roles, Supabase Auth setup, database changes (migrations 011–017), frontend pages, and hackathon demo flow.
+This document provides a comprehensive reference for Integronix's multi-tenant structure, user roles, and how they bridge with Supabase Authentication.
 
----
+## 1. Architectural Overview
 
-## 1. Tenant Architecture — 3 Levels
+Integronix uses a **3-tier organizational model** to strictly isolate and compartmentalize data across different clients and their facilities. 
 
 ```
-Organization  (top-level tenant)
-    └── Branch  (department / wing / campus)
-          └── User  (scoped to org + optional branch)
+Organization  (Level 1 - The Client: e.g., Apollo Hospitals Group)
+    └── Branch  (Level 2 - The Facility: e.g., Main Cardiology Wing, Chennai)
+          └── User  (Level 3 - The Individual: Doctors, Coders, Admins)
 ```
 
-Every clinical case, coding result, and audit log is owned by exactly **one organization**. Supabase Row-Level Security (RLS) enforces this at the database level — Hospital A physically cannot query Hospital B's data, even with a valid JWT.
+**Core Principle:** Every single piece of transaction data (cases, coding results, audit logs) is permanently stamped with an `organization_id` and, where applicable, a `branch_id` and `submitted_by` (User ID).
+
+This is enforced at the database level using PostgreSQL Row-Level Security (RLS) policies within Supabase. It is fundamentally impossible for User A at Hospital A to query or perceive data belonging to Hospital B, regardless of API flaws or direct database requests.
 
 ---
 
-## 2. Organizations
+## 2. The Core Tables
 
-Top-level entity. All data is scoped to one organization.
+These tables establish the multi-tenant foundation. See the `migrations/schema/002_core_tables.sql` for the raw definitions.
 
-| Column | Type | Description |
-|---|---|---|
-| `id` | UUID | Primary key |
-| `name` | TEXT | e.g. `City General Hospital` |
-| `slug` | TEXT | URL-safe, unique — e.g. `city-general-hospital` |
-| `type` | TEXT | `hospital` · `clinic` · `rcm_vendor` · `diagnostic_center` |
-| `country` | TEXT | Default `US` |
-| `timezone` | TEXT | Default `America/New_York` |
-| `is_active` | BOOLEAN | Soft-delete flag |
+### `organizations`
+The supreme tenant record. Everything rolls up to this table.
+- `id`: UUID (Primary Key)
+- `name`: Human-readable name.
+- `slug`: URL-safe, unique identifier (e.g., `apollo-hospitals`).
+- `type`: Categorizes the organization (`hospital`, `clinic`, `rcm_vendor`, `diagnostic_center`, `insurance_payer`).
 
-**Demo org seeded:**
-- Name: `City General Hospital`
-- Slug: `city-general-hospital`
-- Type: `hospital`
-- ID: `00000000-0000-0000-0000-000000000001`
+### `branches`
+Logical or physical sub-units within an organization to allow for granular reporting and access control.
+- `id`: UUID (Primary Key)
+- `organization_id`: UUID (Foreign Key → `organizations(id)`)
+- `code`: Internal reference code (e.g., `APO-CHE-CARDIO`).
 
----
-
-## 3. Branches
-
-A branch is a physical or logical sub-unit of an organization (department, campus, specialty wing). Cases are tracked per branch for analytics and reporting.
-
-| Column | Type | Description |
-|---|---|---|
-| `id` | UUID | Primary key |
-| `organization_id` | UUID | FK → organizations |
-| `name` | TEXT | Unique within the org |
-| `code` | TEXT | Short internal code e.g. `CGH-CARD` |
-| `city` / `state` | TEXT | Location |
-| `is_active` | BOOLEAN | Soft-delete |
-
-**Demo branches seeded:**
-
-| ID | Name | Code | City |
-|---|---|---|---|
-| `...000010` | Main Campus — Cardiology | `CGH-CARD` | New York, NY |
-| `...000011` | North Wing — Endocrinology | `CGH-ENDO` | New York, NY |
-| `...000012` | South Campus — Orthopaedics | `CGH-ORTH` | New York, NY |
+### `users`
+Represents individuals working within the platform.
+- `id`: UUID (Primary Key - used internally as `submitted_by`).
+- `organization_id`: UUID (Foreign Key → `organizations(id)`). **Every user must belong to an organization.**
+- `branch_id`: UUID (Foreign Key → `branches(id)`). **Nullable**. If a user has a specific branch assigned, their access is scoped to that branch. If null, their scope is defined by their role (typically org-wide).
+- `auth_id`: UUID (Foreign Key). This is the crucial link to the Supabase `auth.users` table, bridging our application logic with the authentication provider.
+- `email`, `role`: User attributes.
 
 ---
 
-## 4. Users & Roles
+## 3. Role-Based Access Control (RBAC)
 
-Each user belongs to one organization and optionally one branch. Branch is `NULL` for org-wide roles.
+The `role` column in the `users` table determines the permission level. The platform enforces 5 distinct roles:
 
-| Column | Type | Description |
-|---|---|---|
-| `id` | UUID | Primary key |
-| `organization_id` | UUID | FK → organizations |
-| `branch_id` | UUID ⬜ | FK → branches (nullable for org-wide users) |
-| `email` | TEXT | Unique |
-| `full_name` | TEXT | Display name |
-| `role` | TEXT | `admin` · `auditor` · `coder` |
-| `auth_id` | UUID | FK → `auth.users(id)` — links to Supabase Auth |
-| `is_active` | BOOLEAN | Soft-delete |
-| `last_login_at` | TIMESTAMPTZ | Updated on sign-in |
+| Role | Scope | Capabilities | Use Case |
+| :--- | :--- | :--- | :--- |
+| **`admin`** | Organization-wide | Full access to all branches, cases, and settings within the org. Can manage other users. | IT Admin, Medical Director |
+| **`auditor`** | Organization-wide | Read-only access across the entire organization. Can view cases, coding results, and audit logs. Cannot submit new cases. | Compliance Officer, Quality Assurance |
+| **`coder`** | Branch-specific | Can submit new clinical cases to the AI pipeline and view results *only* for the branch they are assigned to (`branch_id`). | Medical Coder, Floor Nurse |
+| **`rcm`** | Organization-wide | Dedicated to the Revenue Cycle Management module. Manages claims, billing pipelines, and financial analytics. | Billing Specialist, Finance Team |
+| **`payer`** | Organization-wide | Restricted access to a specific `/payer/*` portal. Used by insurance adjudicators to review claims submitted by the hospital. | Insurance Partner |
 
-### Role Definitions
+---
 
-| Role | What They Can Do | Branch Restriction |
-|---|---|---|
-| `admin` | Full org access — manage users, view all branches, view all results | ❌ None (org-wide) |
-| `auditor` | Read-only across entire org — view all cases, results, audit logs | ❌ None (org-wide) |
-| `coder` | Submit clinical cases via AI pipeline, view results from own branch only | ✅ Scoped to `branch_id` |
+## 4. The Auth Flow (Supabase Integration)
 
-### Demo Users Seeded
+Integronix delegates authentication (passwords, JWTs, sessions) to Supabase Auth, but maintains authorization (roles, tenants) in our custom `public.users` table.
 
-> **Passwords not stored here.** Check `.env.local` for the demo user password, or ask the team lead.
+1. **User Sign-Up/Creation**: A user is created in Supabase Auth (yielding an `auth.users.id`). A corresponding row is inserted into our `public.users` table, storing their `role`, `organization_id`, and linking the `auth_id`.
+2. **Login**: The user authenticates via Next.js against Supabase. Supabase returns a JWT and establishes a session.
+3. **API Requests**: The Next.js frontend sends the JWT bearer token with every request to the FastAPI backend.
+4. **Backend Verification**: 
+    - The FastAPI backend validates the JWT using the Supabase Admin client. 
+    - It extracts the `user_id` (the `auth_id`) from the verified token payload.
+    - It queries the `public.users` table using that `auth_id` to retrieve the internal user object, including their `role`, `organization_id`, and `branch_id`.
+5. **Enforcement**: This internal user object is then injected into the request state (e.g., the `CodingState` context for LangGraph). Every downstream database query, pipeline node, and API response dynamically scopes its behavior based on these verified multi-tenant attributes.
 
-| Email | Full Name | Role | Branch |
-|---|---|---|---|
-| `admin@citygeneral.demo` | Dr. Sarah Chen (Admin) | `admin` | All branches |
-| `auditor@citygeneral.demo` | James Patel (Auditor) | `auditor` | All branches |
-| `coder.cardio@citygeneral.demo` | Maria Santos (Coder) | `coder` | Cardiology (`CGH-CARD`) |
-| `coder.endo@citygeneral.demo` | Raj Kumar (Coder) | `coder` | Endocrinology (`CGH-ENDO`) |
-| `demo@integronix.ai` | Demo User | `admin` | All branches |
+This architecture ensures a seamless developer experience (using Supabase tools) while maintaining strict, application-specific B2B security requirements.
 
 > The `demo@integronix.ai` user is triggered by the **Demo Access** button on the login page.  
 > Credentials are stored in `.env.local` as `NEXT_PUBLIC_DEMO_EMAIL` and `NEXT_PUBLIC_DEMO_PASSWORD`.

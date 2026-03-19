@@ -1,103 +1,95 @@
-# 18 — Deterministic ICD Decision Algorithm
+# Deterministic ICD Decision Algorithm
 
-> This is Integronix's core intellectual property.
-> The ICD Decision Node applies this algorithm to select the single best ICD-10 code.
-> No code is accepted unless it passes every validation gate.
+> The `icd_decision_node` is the intellectual core of the Integronix engine. It is a fully deterministic, rule-based algorithm responsible for selecting the final, most accurate ICD code. By deliberately avoiding a final-step LLM "opinion," we ensure every decision is auditable, compliant, and based on a traceable set of rules.
 
 ---
 
-## Algorithm Overview
+## 1. Algorithm Overview
 
-```
-Input:  candidate_icd_codes[] (from SNOMED map or embedding search)
-        structured_entities   (diagnosis text, severity, comorbidities, laterality)
-Output: final_icd_code, confidence_score
-```
+The node receives a list of `candidate_icd_codes` from one of the upstream paths (WHO API, SNOMED mapping, or embedding search). It enriches, scores, and ranks these candidates through a multi-step process to select a winner.
 
-The algorithm runs 7 sequential filters and scoring steps. A code that fails a gate is removed from the pool. The highest-scoring survivor wins.
+**Input:**
+- `candidate_icd_codes[]`: A list of potential ICD codes.
+- `structured_entities`: The FHIR-like JSON from the `clinical_extractor` node.
+- `raw_text`: The full, original clinical note.
 
----
-
-## Step 1 — Billable Filter (Hard Gate)
-
-**Rule:** Remove any code where `is_billable = FALSE`.
-
-```python
-def filter_billable(candidates: list) -> list:
-    return [c for c in candidates if c["is_billable"] is True]
-
-# If no billable codes remain → return error: "no_confident_match"
-```
-
-**Why:** Non-billable codes cannot be submitted to payers. No exception.
+**Output:**
+- `final_icd_code`: The single best ICD code selected.
+- `confidence_score`: The final calculated confidence in the selection.
+- `icd_codes[]`: A list of codes for the final report, including primary, secondary, and additional codes.
+- `decision_trace`: An audit object detailing the logic path taken.
 
 ---
 
-## Step 2 — Existence Check (Hard Gate)
+## 2. Step 1: Candidate Augmentation (Robustness)
 
-**Rule:** Every candidate must physically exist in the `icd_codes` table.
+Before scoring begins, the node checks if the candidate pool is sufficient.
 
-```python
-async def filter_exists(candidates: list, db) -> list:
-    verified = []
-    for c in candidates:
-        row = await db.fetchrow("SELECT code FROM icd_codes WHERE code = $1", c["code"])
-        if row:
-            verified.append(c)
-    return verified
-```
-
-**Why:** Closes the hallucination gap. LLM may suggest a code that looks right but doesn't exist. The DB is the only source of truth.
+-   **Rule**: If the initial list of candidates is empty or has fewer than 3 codes, the system triggers a fallback mechanism.
+-   **Action**: It calls the `icd_provider` service, which dynamically queries the appropriate data source (internal ICD-10 DB or external WHO ICD-11 API, based on `org_settings`) using the diagnosis text.
+-   **Result**: The new candidates are merged with any existing ones, ensuring the decision engine always has a rich set of options to evaluate. The `mapping_path` is updated to `"provider_fallback"` or `"provider_augmented"` to trace this action.
 
 ---
 
-## Step 3 — Specificity Scoring (Ranking Gate)
+## 3. Step 2: Hard Gate - Billable Filter
 
-Assign a specificity score to each candidate based on code structure and clinical alignment.
+-   **Rule**: Remove any candidate code where `is_billable = FALSE`.
+-   **Justification**: This is a non-negotiable first step. Non-billable codes are category headers (e.g., `E11`) and cannot be used for billing. The system must only select codes that are valid for submission.
 
-```python
-def compute_specificity_score(candidate: dict, entities: dict) -> float:
-    score = 0.0
-    code = candidate["code"]
-    desc = candidate["description"].lower()
-    severity   = (entities.get("severity") or "").lower()
-    comorbids  = [c.lower() for c in entities.get("comorbidities", [])]
-    laterality = (entities.get("laterality") or "").lower()
+---
 
-    # 1. Code length reward: longer = more specific
-    # E11.9 (4 chars) vs E11.22 (5 chars after dot = more specific)
-    code_specificity = len(code.replace(".", ""))
-    score += code_specificity * 1.5
+## 4. Step 3: The Scoring Gauntlet
 
-    # 2. Combination code reward (with/and keywords)
-    if any(kw in desc for kw in ["with", "associated with", "complicated by", "and"]):
-        score += 5.0
+Every surviving candidate is passed through a series of scoring functions. The results are combined into a `final_score`.
 
-    # 3. Severity alignment
-    severity_map = {
-        "acute":    ["acute", "uncompensated"],
-        "chronic":  ["chronic", "longstanding"],
-        "severe":   ["severe", "major", "uncontrolled"],
-        "moderate": ["moderate"],
-        "mild":     ["mild", "minor"]
-    }
-    for sev_key, sev_terms in severity_map.items():
-        if sev_key in severity and any(t in desc for t in sev_terms):
-            score += 3.0
-            break
+### A. Specificity Score (`_specificity_score`)
+-   **Purpose**: To reward codes that are more clinically specific.
+-   **Metrics**:
+    -   **Code Length**: Longer codes (e.g., `I21.4` vs. `I21`) receive a higher score.
+    -   **Keyword Matching**: The score is boosted if keywords from our curated `COMPLICATION_KEYWORDS` list (e.g., "with," "acute," "neuropathy") appear in *both* the ICD code's description and the clinical text from the `structured_entities`.
 
-    # 4. Laterality alignment
-    if laterality and laterality in desc:
-        score += 2.0
+### B. Clinical Consistency Score (`_clinical_consistency_score`)
+-   **Purpose**: To measure how well the code's description is supported by the clinical evidence.
+-   **Logic**: It tokenizes the ICD description into significant words (length > 4) and calculates the percentage of those words that appear in the `evidence_text` provided by the `clinical_extractor` node. A higher percentage yields a higher score.
 
-    # 5. CC/MCC bonus (higher reimbursement, but only if clinically supported)
-    if candidate.get("is_mcc"):
-        score += 3.0
-    elif candidate.get("is_cc"):
-        score += 1.5
+### C. Combination Code Priority (`_combination_code_priority`)
+-   **Purpose**: To adhere to ICD-10 guidelines that prefer single "combination codes" over multiple individual codes.
+-   **Logic**: If a code's description contains keywords like "with," "and," or "associated with," it receives a score boost.
 
-    # 6. Source confidence from mapping/embedding
-    score += candidate.get("similarity_score", 0.5) * 4.0
+### D. Negation Penalty (`_negation_penalty`)
+-   **Purpose**: To prevent the selection of a complication code when the text explicitly denies it.
+-   **Logic**: If a candidate is a "complication code" (e.g., "Diabetes with neuropathy"), the function searches the full `raw_text` for phrases from our `NEGATION_PHRASES` list (e.g., "no complications," "no evidence of neuropathy"). If a negation is found, a significant penalty is applied to the score.
+
+---
+
+## 5. Step 4: Final Score Calculation & Ranking
+
+The individual scores are combined into a single `final_score` using a weighted formula that prioritizes different factors:
+
+`score = (confidence * 0.4) + (specificity * 0.3) + (consistency * 0.2) + (combination * 0.1) + negation_penalty`
+
+-   `confidence`: The initial score from the upstream node (e.g., the similarity score from an embedding search).
+
+After this initial calculation, two final adjustments are made:
+
+1.  **Penalize Unspecified Codes**: Any code ending in `.9`, `.90`, or `.0` (indicating it's "unspecified") receives a score penalty if the clinical text contains specific keywords that suggest a more precise code is available.
+2.  **Apply Gold Standard Keywords**: The system checks the text for a curated list of `GOLD_STANDARD_KEYWORDS` (e.g., "NSTEMI"). If a keyword is found and a candidate code is an exact match for that keyword's standard code (e.g., `I21.4`), its score is immediately boosted to `0.98`, making it the almost certain winner.
+
+Finally, all candidates are sorted in descending order by `final_score`.
+
+---
+
+## 6. Step 5: The Decision & Multi-Code Output
+
+-   **Winner Selection**: The candidate at the top of the ranked list (with the highest `final_score`) is selected as the `final_icd_code`.
+
+-   **Multi-Code Generation**: The system does not stop there. It generates a list of codes for the final report, mimicking a human coder's output:
+    1.  The winning code is assigned the `role: "primary"`.
+    2.  Other high-scoring candidates (`final_score >= 0.40`) are included with roles like `"secondary"` or `"additional"`.
+    3.  A detailed `rationale` is generated for each code, explaining why it was chosen (e.g., "MCC — Major Complication/Comorbidity," "exact SNOMED match," "semantic match").
+
+This deterministic, multi-faceted algorithm ensures that the final code selection is not just a guess, but a defensible and clinically sound conclusion based on a weighted analysis of all available evidence.
+
 
     return score
 ```

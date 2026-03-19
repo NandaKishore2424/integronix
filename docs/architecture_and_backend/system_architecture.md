@@ -1,172 +1,62 @@
-## 2. System Architecture
+# System Architecture
 
-### 2.1 Architectural Overview
-The Integronix system is built on a modern, cloud-native architecture designed for high scalability, real-time processing, and strict data isolation (multi-tenancy). The system is logically divided into four primary tiers:
-1. **Client Layer:** Web-based interfaces for end-users and administrators.
-2. **API Gateway & Services:** A RESTful API layer that handles authentication, routing, and core business logic.
-3. **AI Pipeline (LangGraph):** The core intelligence engine that processes clinical text, resolves codes via the WHO ICD API, and performs risk scoring.
-4. **Data Layer:** A multi-tenant database built on PostgreSQL (Supabase) handling structured storage, user management, and vector embeddings.
+## 2.1 Architectural Overview
+The Integronix system is engineered on a modern, cloud-native, and API-first architecture designed for high performance, scalability, and robust security. The architecture is logically segmented into four primary tiers, ensuring a clear separation of concerns and enabling independent development and scaling of each component.
 
-### 2.2 System Block Diagram
+1.  **Presentation Layer (Frontend)**: A responsive and interactive web application built with Next.js, providing the user interface for administrators, coders, and auditors.
+2.  **Application & API Layer (Backend)**: A high-performance backend built with Python and FastAPI, which exposes a RESTful API and serves as the gateway to the core intelligence of the system.
+3.  **Agentic AI Pipeline (LangGraph)**: The heart of the system. A sophisticated, stateful workflow built with LangGraph that orchestrates a series of specialized agents to perform the end-to-end medical coding and auditing process.
+4.  **Data & Persistence Layer**: A secure and scalable data store built on PostgreSQL and managed via Supabase, handling structured data, user information, multi-tenancy, and the powerful `pgvector` extension for semantic search.
 
-The following diagram illustrates the high-level architecture of the Integronix system, detailing the flow from the client through the API and into the AI processing pipeline.
+## 2.2 System Architecture Diagram
 
-```mermaid
-block-beta
-  columns 1
-  
-  %% --- Client Layer ---
-  space
-  block:ClientLayer["Client Layer"]
-    columns 3
-    WebBrowser["React Dashboard (Next.js)"]
-    PDFUpload["PDF Upload Client"]
-    AdminConsole["Admin Console"]
-  end
-  
-  space
-  down1<["HTTPS"]>(down)
-  space
+The following diagram provides a high-level, comprehensive visualization of the Integronix system architecture, illustrating the flow of data and control from the user's browser through the various backend components and external services.
 
-  %% --- API Gateway ---
-  block:APIGateway["API Gateway & Services"]
-    columns 2
-    FastAPI["FastAPI (REST API)
-    JWT Auth + CORS"]
-    Auth["Supabase Auth
-    Token Validation"]
-    FastAPI -- "Verify Token" --> Auth
-  end
-  
-  space
-  down2<["Internal Routing"]>(down)
-  space
+**[View Detailed System Architecture Diagram](./diagrams.md#2-system-architecture-diagram)**
 
-  %% --- AI Pipeline (LangGraph) ---
-  block:AIPipeline["LangGraph AI Coding Pipeline"]
-    columns 8
-    
-    Node1["Node 1
-    Doc Processor
-    (OCR)"]
-    
-    Node2["Node 2
-    Clinical Extractor
-    (Groq LLaMA)"]
-    
-    Node3["Node 3
-    ICD Resolver
-    (WHO API)"]
-    
-    Node4["Node 4
-    SNOMED Mapper"]
-    
-    Node5["Node 5
-    Embedding Fallback"]
-    
-    Node6["Node 6
-    ICD Decision Engine"]
-    
-    Node7["Node 7
-    Audit Comparison"]
-    
-    Node8["Node 8
-    Risk Scorer & FHIR"]
+---
 
-    %% Flow arrows
-    Node1 --> Node2
-    Node2 --> Node3
-    Node3 --> Node4
-    Node4 --> Node5
-    Node5 --> Node6
-    Node6 --> Node7
-    Node7 --> Node8
-  end
-  
-  space
-  down3<["External API Calls"]>(down)
-  space
+## 2.3 Component Descriptions
 
-  %% --- External Services ---
-  block:ExternalServices["External Services"]
-    columns 3
-    WHOAPI["WHO ICD API v2
-    (id.who.int)"]
-    
-    GroqCloud["Groq Cloud
-    (LLaMA 3.3-70B)"]
-    
-    SupabaseDB["Supabase PostgreSQL
-    (Data Storage & RLS)"]
-  end
+### 2.3.1 Presentation Layer (Frontend)
+The entire user experience is delivered through a modern web application built with **Next.js** (a React framework). This choice enables a fast, responsive, and feature-rich Single-Page Application (SPA) experience.
+- **Hosting**: The frontend is designed for easy deployment on serverless platforms like Vercel or Netlify, which provide automatic scaling, global distribution (CDN), and integrated CI/CD pipelines.
+- **Communication**: The frontend is completely decoupled from the backend logic. It communicates exclusively with the API Layer via secure HTTPS requests, ensuring no direct access to the database or internal services from the client-side.
+- **Key Features**:
+    - Organization and user management consoles for administrators.
+    - A secure file upload interface for clinical documents.
+    - An interactive dashboard for coders to review AI-generated codes, audit results, and evidence from the clinical text.
 
-  space
-  down4<["Database Reads/Writes"]>(down)
-  space
+### 2.3.2 Application & API Layer (Backend)
+The backend is a high-performance asynchronous application built with **Python 3.11+** and the **FastAPI** framework. It serves as the single, unified entry point for all client requests.
+- **API Gateway**: It exposes a clean, versioned REST API (e.g., `/api/v1/...`). Key endpoints like `POST /code/run` and `POST /code/run-pdf` trigger the entire agentic pipeline.
+- **Security**: Security is paramount. The API layer enforces authentication and authorization on all protected endpoints, typically using JWTs. It integrates with Supabase Auth to validate tokens and retrieve user roles and organization affiliations.
+- **Pydantic Validation**: All incoming request bodies and outgoing responses are rigorously validated against Pydantic models, preventing data-related errors and ensuring a consistent API contract.
+- **Containerization**: The entire backend application is containerized using **Docker**, making it portable, scalable, and easy to deploy in any environment, from local development (via `docker-compose`) to cloud-based container orchestrators.
 
-  %% --- Data Layer ---
-  block:DataLayer["Data Layer (PostgreSQL)"]
-    columns 3
-    CacheDB[("icd_codes
-    (WHO Cache)")]
-    
-    TxDB[("coding_results
-    clinical_cases")]
-    
-    TenantDB[("Multi-Tenant
-    organizations
-    users, branches")]
-  end
-  
-  %% Style definitions
-  classDef layerBox fill:#f9fafb,stroke:#d1d5db,stroke-width:2px,color:#111827;
-  classDef clientBox fill:#e0f2fe,stroke:#38bdf8,stroke-width:2px;
-  classDef apiBox fill:#fef08a,stroke:#facc15,stroke-width:2px;
-  classDef aiBox fill:#ccfbf1,stroke:#14b8a6,stroke-width:2px;
-  classDef aiNode fill:#fff,stroke:#0d9488,stroke-width:1px;
-  classDef extBox fill:#fce7f3,stroke:#f472b6,stroke-width:2px;
-  classDef dbBox fill:#e5e7eb,stroke:#9ca3af,stroke-width:2px;
-  
-  class ClientLayer layerBox;
-  class WebBrowser,PDFUpload,AdminConsole clientBox;
-  
-  class APIGateway layerBox;
-  class FastAPI,Auth apiBox;
-  
-  class AIPipeline layerBox;
-  class Node1,Node2,Node3,Node4,Node5,Node6,Node7,Node8 aiNode;
-  
-  class ExternalServices layerBox;
-  class WHOAPI,GroqCloud,SupabaseDB extBox;
-  
-  class DataLayer layerBox;
-  class CacheDB,TxDB,TenantDB dbBox;
-```
+### 2.3.3 Agentic AI Pipeline (LangGraph)
+This is the core intelligence of Integronix. Instead of a simple, linear script, we use **LangGraph** to define a stateful, graph-based workflow. This allows for complex, conditional logic that mirrors the real-world process of medical coding.
+- **State Management**: A central `CodingState` object persists throughout the workflow, carrying data from one node to the next. This provides a complete, auditable trace of the entire process.
+- **Specialized Nodes**: The graph consists of 10 distinct, specialized nodes, each with a single responsibility. This modular design is key to the system's accuracy and maintainability.
+    1.  **`doc_processing`**: Extracts clean text from uploaded documents, with OCR fallback for scanned images.
+    2.  **`clinical_extractor`**: Uses a powerful LLM (via the **Groq API** for low latency) to perform natural language understanding and extract structured clinical entities.
+    3.  **`cpt_resolver`**: Performs semantic search to find relevant CPT codes.
+    4.  **`snomed_resolver`**: The primary routing node. It checks the organization's settings and decides whether to use the **WHO ICD-11 API** or proceed with the local SNOMED-to-ICD-10 mapping path.
+    5.  **`snomed_icd_map`**: Performs a direct database lookup to crosswalk a SNOMED code to an ICD-10 code.
+    6.  **`icd_embedding` (Fallback)**: A crucial fallback mechanism. If the primary paths fail, this node uses vector similarity search (`pgvector`) to find semantically related codes.
+    7.  **`icd_decision`**: A fully **deterministic**, rule-based engine that selects the final, most accurate code from the candidates. It does **not** use an LLM, ensuring explainable and repeatable results.
+    8.  **`audit_comparison`**: Compares the AI's code against a human-provided code.
+    9.  **`risk_scoring`**: Calculates a compliance risk score based on the audit findings.
+    10. **`financial_calculator`**: Determines the financial impact of any coding discrepancies.
 
-### 2.3 Component Descriptions
+**[View Detailed Agent Pipeline Diagram](./diagrams.md#3-agent-architecture-diagram-langgraph-pipeline)**
 
-#### 2.3.1 Client Layer
-The presentation tier is a server-side rendered application built using **Next.js**. It provides a responsive, single-page application (SPA) experience for medical coders and administrators. Hosted on **Vercel**, it connects to the backend exclusively via HTTPS REST calls, ensuring no direct database access occurs from the browser.
+### 2.3.4 Data & Persistence Layer (PostgreSQL + Supabase)
+The foundation of our data layer is a robust **PostgreSQL** database, which we manage and access through **Supabase**. Supabase provides a suite of tools that simplify database management, authentication, and security.
+- **Multi-Tenancy & Security**: The database is designed for multi-tenancy from the ground up. We leverage PostgreSQL's **Row-Level Security (RLS)** to enforce strict data isolation. This ensures that users from one organization can *never* access the data of another, even if they are in the same database.
+- **Core Schema**: The schema includes tables for `organizations`, `users`, `cases` (which stores the full, serialized `CodingState` for auditability), and `claims`.
+- **Coding & Mapping Data**: It also houses the curated datasets for `cpt_codes`, `icd10_codes`, and the `snomed_icd_map`.
+- **Vector Database (`pgvector`)**: We use the `pgvector` extension, which transforms our PostgreSQL instance into a powerful and efficient vector database. It stores the 384-dimension embeddings of all codes and enables the high-speed semantic search used in our fallback mechanisms. This integrated approach avoids the complexity and cost of maintaining a separate vector database.
 
-#### 2.3.2 API Gateway (FastAPI)
-The backend is powered by Python and **FastAPI**, serving as the unified entry point. It handles:
-*   **Routing:** Endpoints like `/code/run` (text payload) and `/code/run-pdf` (multipart upload).
-*   **Security:** JWT validation via Supabase Auth.
-*   **Session Management:** Initialization of the coding state and injection of organization-specific settings (e.g., `icd_version`).
+**[View Detailed Database ER Diagram](./diagrams.md#4-database-er-diagram)**
 
-#### 2.3.3 LangGraph AI Pipeline
-Integronix replaces traditional sequential processing with a stateful, graph-based execution engine (`langgraph`). The pipeline manages memory (`CodingState`) across 8 specific nodes:
-1.  **Document Processor:** Extracts text from uploaded files using `pdfplumber` (native digital) or falls back to Tesseract OCR for scanned documents.
-2.  **Clinical Extractor:** Prompts the Groq LLaMA 3.3-70B model to extract structured entities (diagnoses, procedures, medications).
-3.  **ICD Resolver:** The primary resolution engine. Integrates with the **WHO ICD API v2** (MMS linearization for ICD-11). If the WHO API is unavailable, it falls back to a SNOMED CT database lookup.
-4.  **SNOMED Mapper:** A legacy crosswalk node that maps SNOMED codes to ICD-10. This is skipped entirely if Node 3 successfully retrieves data from the WHO API.
-5.  **Vector Embedding:** Last-resort fallback. Extracts candidate codes using pgvector-based similarity search against the local `icd_codes` database. Skipped if candidates are already present.
-6.  **Decision Engine:** Deterministically evaluates the list of candidate codes, calculates confidence scores, and selects the primary billable code.
-7.  **Audit Comparison:** Compares the AI's final code against any human-provided code, logging discrepancies for audit trails.
-8.  **Risk & Output:** Calculates clinical risk scores, formats the output into an HL7 FHIR R4 Condition resource, and commits the result to the database.
-
-#### 2.3.4 Data Layer (PostgreSQL)
-The persistent storage tier is housed in **Supabase (PostgreSQL)**. It is specifically designed for isolation:
-*   **Tenant Isolation:** Row-Level Security (RLS) policies enforce strict data segregation, ensuring users can only read/write data linked to their specific `organization_id`.
-*   **Schema:** Key tables include `organizations`, `branches`, `user_profiles`, `clinical_cases` (document storage), `coding_results`, and `org_settings` (for per-hospital ICD version configuration).
-*   **Cache:** The `icd_codes` table is utilized as a warm cache for WHO API lookups, accelerating subsequent requests and storing payer-specific reimbursement rates.

@@ -1,284 +1,157 @@
-# 06 — LangGraph Agent Design
+# LangGraph Agent Design
 
 ## Design Philosophy
 
-> Real agentic AI = Multiple specialized agents + Shared state + Tool usage + Conditional routing.
-> NOT a single LLM call with "Agent" in the function name.
+Our system's intelligence is not derived from a single, monolithic Large Language Model (LLM). Instead, we embrace a true agentic AI architecture, which we define as a system composed of multiple specialized agents, a shared state, the ability to use tools, and conditional routing. This is the core principle behind our choice of LangGraph.
 
-LangGraph is chosen over LangChain because:
-- Our workflow is **graph-based** (not linear)
-- We need **conditional routing** (audit only if human code provided)
-- We need **stateful execution** across multiple steps
-- We need **retry logic** and resilience
+LangGraph is superior to simpler chaining libraries for our needs because our workflow is a **cyclical graph**, not a straight line. We require:
+- **Conditional Routing**: The path the data takes must change based on the context. For example, if an organization is configured for ICD-11, we call the WHO API; otherwise, we use our local SNOMED-to-ICD-10 mapping. If those primary paths fail, we must then route to a fallback vector search.
+- **Stateful Execution**: A shared `CodingState` object is passed between all nodes. This object acts as the "memory" of the workflow, accumulating data from each step, from the initial raw text to the final financial impact analysis.
+- **Modularity and Specialization**: Each node in the graph is a specialized agent with a single, well-defined responsibility. This makes the system highly modular, easier to debug, test, and upgrade.
 
 ---
 
-## Global State Object
+## The `CodingState` Object: Shared Memory
 
-All agents read from and write to a shared `CodingState` object.
+This is the central data structure that flows through the entire graph. It's a Python `TypedDict` that acts as the shared memory for all agents. Each node reads from this state and writes its results back to it.
 
 ```python
-from typing import TypedDict, Optional
+# A simplified representation of the CodingState from backend/agents/graph.py
 
-class CodingState(TypedDict):
-    # Input
-    raw_text: str                    # Extracted text from PDF
+class CodingState(TypedDict, total=False):
+    # --- Inputs & Configuration ---
+    session_id: str
+    org_id: Optional[str]
+    icd_version: Optional[str]      # e.g., "icd-11" or "icd-10"
+    claim_scheme: Optional[str]     # e.g., "ayushman", "cghs"
+    human_icd_code: Optional[str]   # For audit comparison
+    pdf_bytes: Optional[bytes]      # Raw PDF data if uploaded
 
-    # After Clinical Extraction Agent
-    structured_entities: dict        # Diagnosis, severity, comorbidities, evidence
+    # --- Core Pipeline Data ---
+    raw_text: str                   # Populated by Node 1
+    structured_entities: dict       # Populated by Node 2 (LLM output)
+    cpt_codes: List[dict]           # Populated by CPT Resolver Node
+    snomed_concepts: List[dict]     # Populated by SNOMED Resolver Node
+    candidate_icd_codes: List[dict] # Populated by Mapping/Embedding Nodes
+    final_icd_code: str             # Populated by Decision Node
+    confidence_score: float
+    mapping_path: str               # "who_api", "snomed_to_icd_map", "embedding_search"
+    decision_trace: Optional[dict]  # Explanation from the decision engine
 
-    # After ICD Candidate Retrieval
-    candidate_icd_codes: list        # Top 5 candidate ICD codes from DB
+    # --- Audit & Financials ---
+    discrepancy: Optional[dict]
+    financial_delta: Optional[float]
+    risk_score: float
+    risk_label: str
+    financial_summary: Optional[dict]
 
-    # After ICD Decision Agent
-    final_icd_code: str              # Selected best code
-    confidence_score: float          # Match confidence (0.0 - 1.0)
-
-    # Audit inputs (optional)
-    human_icd_code: Optional[str]    # Human-assigned code (if audit mode)
-
-    # After Audit Agent
-    discrepancy: Optional[dict]      # Discrepancy analysis result
-
-    # After Financial Intelligence Agent
-    financial_delta: Optional[float] # Revenue delta (simulated)
-
-    # After Risk Scoring Node
-    risk_score: float                # Risk level: 0.0 = low, 1.0 = high
-    risk_label: str                  # "LOW" | "MEDIUM" | "HIGH"
+    # --- Error Handling ---
+    error_at: Optional[str]         # Name of the node that failed
 ```
 
 ---
 
-## Node Definitions
+## The Agentic Pipeline: Node Definitions
 
-### NODE 1: Document Processing Node
+The pipeline is a directed acyclic graph with 10 specialized nodes.
 
-**Type:** Deterministic (no LLM)
-**Input:** `raw_pdf_bytes`
-**Output:** `state["raw_text"]`
+**[View Full Pipeline Diagram](./diagrams.md#3-agent-architecture-diagram-langgraph-pipeline)**
 
-```
-Responsibilities:
-- Accept PDF bytes
-- Use pdfplumber or PyMuPDF to extract text
-- Handle scanned PDFs with OCR if needed
-- Store raw text in state
-```
+### 1. `doc_processing_node`
+- **Type**: Deterministic
+- **Responsibility**: Text extraction. It takes raw `pdf_bytes` from the state and populates the `raw_text` field. It intelligently handles both digital and scanned PDFs by trying `pdfplumber` first and falling back to Tesseract OCR if necessary. It also sets metadata like `document_source` and `ocr_used`.
 
-**Tools used:** `pdf_extractor`, `ocr_tool`
+### 2. `clinical_extraction_agent`
+- **Type**: LLM-Powered
+- **Responsibility**: Clinical reasoning. This is one of the few places an LLM is used. It takes the `raw_text` and sends it to the Groq API with a carefully engineered prompt, instructing it to extract key clinical entities (diagnosis, comorbidities, procedures, etc.) and return them as a structured JSON object. The output is validated against a Pydantic model before being written to `state["structured_entities"]`.
 
----
+### 3. `cpt_resolver_node`
+- **Type**: Deterministic (Vector Search)
+- **Responsibility**: CPT code resolution. It takes the extracted procedures and services from the LLM, generates vector embeddings, and performs a semantic search against a `pgvector` table of CPT codes to find the most relevant matches.
 
-### NODE 2: Clinical Extraction Agent (LLM Node)
+### 4. `snomed_resolver_node`
+- **Type**: Hybrid (LLM + Deterministic Routing)
+- **Responsibility**: Concept resolution and primary routing. This is a critical node.
+    1.  It first checks `state["icd_version"]`.
+    2.  **If ICD-11**: It calls the `who_icd_service` to directly query the WHO API. If successful, it populates `state["candidate_icd_codes"]` and sets `mapping_path` to `"who_api"`.
+    3.  **If ICD-10**: It uses an LLM to resolve the clinical text to a SNOMED-CT concept ID.
+- The output is a list of resolved SNOMED concepts written to `state["snomed_concepts"]`.
 
-**Type:** Agentic (LLM-powered)
-**Input:** `state["raw_text"]`
-**Output:** `state["structured_entities"]`
+### 5. `snomed_icd_mapping_node`
+- **Type**: Deterministic (Database Lookup)
+- **Responsibility**: Direct crosswalking. This node is only active in the ICD-10 path. It takes the SNOMED concepts from the previous node and performs a direct lookup in the `snomed_icd_map` table in our PostgreSQL database to find corresponding ICD-10 codes. If found, it populates `state["candidate_icd_codes"]`.
 
-```
-Responsibilities:
-- Send raw text to LLM via Groq
-- Extract: diagnosis, severity, chronic/acute, comorbidities, evidence text
-- Force structured JSON output using Pydantic schema
-- Validate output before writing to state
-```
+### 6. `icd_embedding_node` (Fallback)
+- **Type**: Deterministic (Vector Search)
+- **Responsibility**: Semantic search fallback. This node is **only executed if** the previous mapping nodes (`who_api` or `snomed_icd_map`) failed to produce any candidate codes. It generates a vector embedding from the clinical summary and uses `pgvector` to find the top 5 most semantically similar ICD codes from our database. It sets `mapping_path` to `"embedding_search"`.
 
-**LLM Prompt Constraint:**
-> "Extract clinical entities only. DO NOT generate ICD codes. Return only: diagnosis, severity, laterality, comorbidities, and evidence_text."
+### 7. `icd_decision_node`
+- **Type**: Deterministic (Rule-Based Engine)
+- **Responsibility**: Final code selection. This node is the core of our "no hallucinations" promise. It takes the `candidate_icd_codes` (from whichever path they originated) and applies a sophisticated, rule-based scoring algorithm. It considers factors like code specificity, evidence from the clinical text, and negation penalties. It does **not** use an LLM. It selects the highest-scoring code and writes it to `state["final_icd_code"]`.
 
-**Output schema:**
-```json
-{
-  "diagnosis": "Type 2 Diabetes with diabetic peripheral neuropathy",
-  "severity": "moderate",
-  "laterality": null,
-  "comorbidities": ["hypertension", "chronic kidney disease stage 3"],
-  "evidence_text": "Patient presents with bilateral foot pain and numbness..."
-}
-```
+### 8. `audit_comparison_node`
+- **Type**: Deterministic
+- **Responsibility**: Compares the AI's `final_icd_code` with the `human_icd_code` (if provided). It categorizes the result (e.g., `SPECIFICITY_IMPROVEMENT`, `UNSUPPORTED_CODE`) and populates the `discrepancy` field.
 
-**Tools used:** `groq_llm`, `pydantic_validator`
+### 9. `risk_scoring_node`
+- **Type**: Deterministic
+- **Responsibility**: Calculates a compliance risk score based on the audit results. For example, an `UNSUPPORTED_CODE` discrepancy results in a high risk score, while a `SPECIFICITY_IMPROVEMENT` is medium risk. The result is written to `state["risk_score"]` and `state["risk_label"]`.
 
----
-
-### NODE 3: ICD Candidate Retrieval Node
-
-**Type:** Deterministic (pgvector + DB)
-**Input:** `state["structured_entities"]["diagnosis"]`
-**Output:** `state["candidate_icd_codes"]`
-
-```
-Responsibilities:
-- Generate embedding of extracted diagnosis text
-- Query pgvector to find top 5 semantically similar ICD codes
-- Return code details: code, description, billable flag, CC/MCC flag
-```
-
-**Tools used:** `embedding_model`, `pgvector_search`, `icd_db_lookup`
-
-**Example output:**
-```json
-[
-  {"code": "E11.22", "description": "Type 2 diabetes mellitus with diabetic chronic kidney disease, stage 3", "is_billable": true, "is_cc": true},
-  {"code": "E11.40", "description": "Type 2 diabetes mellitus with diabetic neuropathy, unspecified", "is_billable": true, "is_cc": false},
-  ...
-]
-```
-
----
-
-### NODE 4: ICD Decision Agent (Hybrid Node)
-
-**Type:** Hybrid (LLM reasoning + deterministic validation)
-**Input:** `state["candidate_icd_codes"]`, `state["structured_entities"]`
-**Output:** `state["final_icd_code"]`, `state["confidence_score"]`
-
-```
-Responsibilities:
-- Present top 5 candidates to LLM
-- LLM reasons about best match given severity and comorbidities
-- Deterministic validator confirms:
-    - Code exists in DB
-    - Code is billable
-    - Code matches specificity level
-- If validation fails → select next best candidate
-```
-
-**Key Rule:**
-> LLM SUGGESTS. Deterministic engine CONFIRMS.
-> LLM cannot override DB validation.
-
-**Tools used:** `groq_llm`, `billable_validator`, `specificity_checker`
-
----
-
-### NODE 5: Audit Comparison Agent
-
-**Type:** Agentic (conditional — only triggered if `human_icd_code` is provided)
-**Input:** `state["final_icd_code"]`, `state["human_icd_code"]`, `state["structured_entities"]`
-**Output:** `state["discrepancy"]`, `state["financial_delta"]`
-
-```
-Responsibilities:
-- Compare AI code vs human code
-- Determine discrepancy type:
-    - EXACT_MATCH — codes match
-    - SPECIFICITY_IMPROVEMENT — AI code is more specific
-    - UNSUPPORTED_CODE — human code not backed by clinical text
-    - OVERCODING — human code more specific than evidence supports
-- Search clinical text for evidence supporting AI code
-- Look up revenue delta from revenue_lookup table
-```
-
-**Discrepancy output:**
-```json
-{
-  "type": "SPECIFICITY_IMPROVEMENT",
-  "ai_code": "E11.22",
-  "human_code": "E11.9",
-  "explanation": "AI identified chronic kidney disease stage 3 from clinical text",
-  "evidence": "Patient has CKD stage 3 as documented in labs section",
-  "revenue_delta": 450.00
-}
-```
-
-**Tools used:** `icd_db_comparison`, `evidence_search`, `revenue_lookup`
-
----
-
-### NODE 6: Risk Scoring Node
-
-**Type:** Deterministic
-**Input:** `state["discrepancy"]` (if exists), `state["final_icd_code"]`
-**Output:** `state["risk_score"]`, `state["risk_label"]`
-
-```
-Risk Rules:
-- EXACT_MATCH → risk_score = 0.1, label = "LOW"
-- SPECIFICITY_IMPROVEMENT → risk_score = 0.5, label = "MEDIUM"
-  (missed revenue, potential audit if undercoded systematically)
-- UNSUPPORTED_CODE → risk_score = 0.9, label = "HIGH"
-  (compliance risk — billing unsupported by documentation)
-- OVERCODING → risk_score = 0.95, label = "HIGH"
-  (fraud risk)
-- No human code provided → risk_score = 0.2, label = "LOW"
-```
-
-**Tools used:** None (pure logic)
+### 10. `financial_calculator_node`
+- **Type**: Deterministic
+- **Responsibility**: Calculates the financial impact. It looks up the DRG/reimbursement values for both the AI and human codes and calculates the delta, writing it to `state["financial_summary"]`.
 
 ---
 
 ## Conditional Graph Flow
 
-```python
-from langgraph.graph import StateGraph, END
+The logic for routing is defined in `backend/agents/graph.py`. The most critical conditional edge is the one that determines whether to use the vector search fallback.
 
+```python
+# backend/agents/graph.py
+
+def _route_after_mapping(state: CodingState) -> str:
+    """
+    This function is a conditional edge in the graph.
+    It checks if any previous node has already found candidate codes.
+    """
+    if state.get("candidate_icd_codes"):
+        # If candidates exist (from WHO API or SNOMED map), go straight to the decision node.
+        return "icd_decision"
+    else:
+        # If no candidates were found, trigger the embedding search fallback.
+        return "icd_embedding"
+
+# --- Graph Definition ---
 graph = StateGraph(CodingState)
 
-# Add nodes
-graph.add_node("doc_processing", doc_processing_node)
-graph.add_node("clinical_extraction", clinical_extraction_agent)
-graph.add_node("icd_retrieval", icd_retrieval_node)
-graph.add_node("icd_decision", icd_decision_agent)
-graph.add_node("audit_comparison", audit_comparison_agent)
-graph.add_node("risk_scoring", risk_scoring_node)
+# ... (all nodes are added) ...
 
-# Define edges
 graph.set_entry_point("doc_processing")
-graph.add_edge("doc_processing", "clinical_extraction")
-graph.add_edge("clinical_extraction", "icd_retrieval")
-graph.add_edge("icd_retrieval", "icd_decision")
+graph.add_edge("doc_processing", "clinical_extract")
+graph.add_edge("clinical_extract", "cpt_resolve")
+graph.add_edge("cpt_resolve", "snomed_resolve")
+graph.add_edge("snomed_resolve", "snomed_icd_map")
 
-# Conditional routing: audit if human_icd_code is provided
-def route_after_decision(state: CodingState):
-    if state.get("human_icd_code"):
-        return "audit_comparison"
-    return "risk_scoring"
-
+# This is where the conditional routing happens:
 graph.add_conditional_edges(
-    "icd_decision",
-    route_after_decision,
+    "snomed_icd_map",
+    _route_after_mapping,
     {
-        "audit_comparison": "audit_comparison",
-        "risk_scoring": "risk_scoring"
+        "icd_decision": "icd_decision",     # Path if candidates were found
+        "icd_embedding": "icd_embedding",   # Path if no candidates were found
     }
 )
 
+graph.add_edge("icd_embedding", "icd_decision") # The fallback path rejoins the main flow
+graph.add_edge("icd_decision", "audit_comparison")
 graph.add_edge("audit_comparison", "risk_scoring")
-graph.add_edge("risk_scoring", END)
+graph.add_edge("risk_scoring", "financial_calc")
+graph.add_edge("financial_calc", END)
 
+# The compiled graph is a runnable object
 app = graph.compile()
 ```
 
----
+This structure ensures a robust, multi-path system that prioritizes direct, accurate methods but gracefully falls back to powerful semantic search when needed, all while maintaining a clear, auditable, and deterministic final decision process.
 
-## Why This is Real Agentic AI (For Q&A)
-
-| Agentic Criterion | Present in Our Design? |
-|---|---|
-| Multiple specialized agents | ✅ Yes — 6 distinct nodes |
-| Shared persistent state | ✅ Yes — CodingState |
-| Tool usage by agents | ✅ Yes — DB, pgvector, LLM, validators |
-| Conditional routing | ✅ Yes — audit branch |
-| Reasoning under uncertainty | ✅ Yes — ICD Decision Agent |
-| Deterministic guardrails | ✅ Yes — code validation, billable check |
-
----
-
-## Where LLM Is Used vs Where It's Forbidden
-
-| Node | LLM Allowed? | Reason |
-|---|---|---|
-| Document Processing | ❌ No | Pure file extraction |
-| Clinical Extraction | ✅ Yes | Clinical NLP reasoning |
-| ICD Candidate Retrieval | ❌ No | DB + vector search only |
-| ICD Decision | ✅ Partially | Reasoning among candidates only |
-| Audit Comparison | ❌ No | Rule-based comparison |
-| Risk Scoring | ❌ No | Pure logic |
-
----
-
-## Pitch Explanation (Memorize This)
-
-> *"We implemented a LangGraph-based multi-agent workflow where specialized agents perform clinical extraction, deterministic ICD candidate retrieval, reasoning-based selection, audit comparison, and risk scoring. Agents interact with internal tools such as ICD master database and revenue lookup tables, ensuring explainability and preventing hallucinated outputs."*

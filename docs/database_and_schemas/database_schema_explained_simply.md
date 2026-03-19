@@ -1,103 +1,81 @@
-# 22 — Integronix Database Explained Simply
-> **Who is this for?** Someone who doesn't work with databases daily.
-> This document explains every table, why it exists, and how they connect — with diagrams.
+# Integronix Database Schema Explained Simply
+
+> **Who is this for?** Stakeholders, product managers, or engineers new to the project who need a high-level conceptual understanding of how data is organized before diving into raw SQL.
+> This document explains the core tables, their purpose, and how they connect using simple analogies.
 
 ---
 
 ## 🏥 Think of the Database Like a Hospital Filing System
 
-Imagine a real hospital. They have:
-- **Filing cabinets** → our database tables
-- **Folders in each cabinet** → rows (records)
-- **Links between folders** → foreign keys (connections between tables)
+To manage complex medical data securely across many clients, we organize our database logically. Imagine a real hospital network:
+- **Filing cabinets** are our **database tables**.
+- **Folders inside the cabinets** are **rows (records)**.
+- **Cross-references between folders** are **Foreign Keys (relationships)**.
 
-Integronix has **14 tables** total. We'll go from simple to complex.
+We group our tables into three main categories: Tenants (Who), Medical Reference (The Rules), and Clinical Operations (The Work).
 
 ---
 
-## Part 1: The Multi-Tenant Hierarchy (NEW — Migrations 011–013)
+## Part 1: The Multi-Tenant Hierarchy (Who)
 
-> **Multi-tenant** just means: "many organizations sharing one system, but each seeing only their own data."
-> Think of it like Outlook — millions of companies use it, but no company sees another's emails.
+Integronix is a **multi-tenant** SaaS platform. This means many different hospitals use the same database, but they are strictly isolated from each other. Think of it like a secure apartment building: everyone shares the plumbing, but no one has the key to your apartment.
 
 ### The 3-Level Hierarchy
 
-```
-🏢 ORGANIZATION  (e.g. "City General Hospital")
-    │
-    ├── 🏬 BRANCH  (e.g. "Cardiology Wing")
-    │       │
-    │       └── 👤 USER  (e.g. "Maria Santos — Coder")
-    │
-    └── 🏬 BRANCH  (e.g. "Endocrinology Wing")
-            │
-            └── 👤 USER  (e.g. "Raj Kumar — Coder")
-```
+1.  **`organizations` (The Hospital Group)**: This is the top level. e.g., "Apollo Hospitals". Every piece of data rolls up to a specific organization.
+2.  **`branches` (The Physical Location/Wing)**: Organizations are divided into branches. e.g., "Apollo Greams Road - Cardiology". This allows for granular reporting.
+3.  **`users` (The People)**: The actual doctors, coders, and admins who log in. Every user is linked to an organization, and usually a specific branch.
 
-### `organizations` table
-The **top of the food chain**. A hospital group, clinic, or RCM company.
-
-| Column | What it means |
-|---|---|
-| `id` | Unique ID (like a hospital registration number) |
-| `name` | "City General Hospital" |
-| `slug` | Web-friendly name: "city-general-hospital" |
-| `type` | Is it a hospital? Clinic? RCM vendor? |
-| `is_active` | Can this org log in? (TRUE/FALSE) |
-
-**Real-world analogy:** Think of this as the *hospital corporation* registered with the government.
+**Security Rule:** PostgreSQL Row-Level Security (RLS) acts as a bouncer. When a user queries a table, the bouncer quietly adds "WHERE organization_id = [YOUR_ORG]" to every request.
 
 ---
 
-### `branches` table
-Each **physical location or department** of the hospital.
+## Part 2: The Medical Reference Tables (The Rules)
 
-| Column | What it means |
-|---|---|
-| `organization_id` | Which hospital does this branch belong to? |
-| `name` | "Main Campus — Cardiology" |
-| `code` | Short code: "CGH-CARD" |
-| `city`, `state` | Where is it physically located? |
+These tables are like massive, fixed **medical dictionaries**. They contain the universal rules of medical coding. They don't change daily, only when official updates are released (e.g., yearly by the CDC or WHO).
 
-**Real-world analogy:** Apollo Hospitals is the organization. Apollo MRC Nagar and Apollo Greams Road are branches.
+### 1. `icd_codes` (The Master Dictionary)
+The official list of disease billing codes.
+*   *Example row:* Code: `E11.9`, Description: "Type 2 diabetes mellitus without complications", is_billable: `True`.
+*   *Hidden Power:* This table also holds the **Vector Embeddings**—the mathematical representations of the text that allow our AI to do "fuzzy" searches instead of exact keyword matches.
 
----
+### 2. `icd_code_hierarchy` & `icd_code_metadata` (The Rules of the Dictionary)
+ICD codes aren't just a flat list; they are a tree.
+*   `hierarchy`: Tells us that `E11.9` is a child of `E11` (Type 2 diabetes).
+*   `metadata`: Holds strict rules. For example, it might say "Code First: underlying condition" or "Excludes1: Type 1 diabetes (E10)".
 
-### `users` table
-Actual **people** who log in and use the system.
-
-| Column | What it means |
-|---|---|
-| `organization_id` | Which hospital do they work for? |
-| `branch_id` | Which specific branch? (NULL = all branches) |
-| `email` | Login email |
-| `role` | What can they do? |
-
-**Three roles explained simply:**
-
-| Role | What they can do |
-|---|---|
-| `admin` | See everything across the whole hospital. Manage users. |
-| `auditor` | Read-only. Reviews results. Cannot submit cases. |
-| `coder` | Submits clinical documents. Sees only their branch's results. |
+### 3. `snomed_concepts` & `snomed_icd_map` (The Translator)
+Doctors often write in clinical terms, not billing codes. SNOMED-CT is a global standard for clinical terms.
+*   `snomed_concepts`: A list of clinical concepts.
+*   `snomed_icd_map`: A crucial translation table mapping a clinical SNOMED concept to its corresponding financial ICD-10 code.
 
 ---
 
-## Part 2: The Medical Reference Tables (Migrations 002–003)
+## Part 3: Clinical Operations Tables (The Work)
 
-These are like **medical encyclopaedias** — fixed reference data, not changing daily.
+This is where the daily action happens. These tables grow rapidly as users upload documents and the AI processes them.
 
-### `icd_codes` table
-The official list of disease billing codes. Like a dictionary of every possible diagnosis.
+### 1. `clinical_cases` (The Patient Chart)
+Every time a user uploads a PDF or pastes text, a new "case" is created.
+*   **Holds:** The raw clinical text, the date, and who uploaded it.
+*   **Security:** Firmly stamped with `organization_id` and `branch_id`.
 
-```
-ICD code E11.22 = "Type 2 diabetes with diabetic chronic kidney disease, stage 3"
-ICD code I10    = "Essential hypertension"
-ICD code A41.9  = "Sepsis, unspecified organism"
-```
+### 2. `coding_results` (The AI's Answer)
+Once the pipeline finishes processing a case, the result is saved here.
+*   **Holds:** The `final_icd_code` selected by the system, the AI's `confidence_score`, and the structured FHIR JSON representation of the clinical evidence.
+*   **Link:** Tied directly to a `clinical_case_id`.
 
-| Column | What it means |
-|---|---|
+### 3. `org_settings` (The Hospital's Preferences)
+Different hospitals code differently. This table stores those preferences.
+*   **Configuration:** Tells the pipeline whether to use `ICD-10` or `ICD-11`, and if they are operating under a specific `claim_scheme` (like Ayushman Bharat). This table drives the conditional routing in our agent pipeline.
+
+### 4. `audit_log` (The Security Camera)
+A chronological record of every significant action taken in the system by users (e.g., logging in, changing a setting, confirming a code). Essential for HIPAA compliance.
+
+---
+
+**Summary:** The database is designed so that *Users* in *Organizations* process *Cases* to get *Results*, using a fixed set of *Medical Rules*, with everything governed by *Org Settings* and recorded in the *Audit Log*.
+
 | `code` | The ICD code itself (e.g. "E11.22") |
 | `description` | What disease this code means |
 | `is_cc` | Is this a Complication? (affects hospital payment) |

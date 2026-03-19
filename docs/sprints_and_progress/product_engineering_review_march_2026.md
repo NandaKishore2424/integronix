@@ -13,6 +13,93 @@ Items are ordered by **priority** (Critical → High → Medium → Low).
 
 ---
 
+## Executive Scorecard (10-point scale)
+
+- **Overall system:** 7.8 — strong architecture and deterministic core, but needs reliability hardening.
+- **Architecture:** 8.6 — clean layered design and routing, good separation of concerns.
+- **Code quality:** 7.6 — generally solid, but inconsistent error handling and limited tests.
+- **Frontend:** 6.5 — functional baseline; needs stronger UX, error visibility, and performance polish.
+- **Backend:** 8.1 — robust pipeline and APIs; needs stronger resilience around external services.
+- **Use case fit:** 8.3 — strong alignment to medical coding workflows; edge cases need deeper coverage.
+- **Features:** 7.4 — core flow is strong; secondary workflows are lighter.
+- **Scalability:** 7.2 — good async design, but needs caching/queueing for heavy calls.
+- **Extensibility:** 8.0 — modular graph and provider abstraction enable expansion.
+- **Reliability:** 7.1 — deterministic core helps; observability and fault handling need upgrades.
+
+---
+
+## Priority Map: What to Fix, Where, and Why
+
+The list below turns the findings into a concrete, prioritized engineering plan. Each item includes **where to change**, **what to change**, and **expected impact**.
+
+### P0 — Critical (must fix before any serious pilot)
+
+1) **Risk scoring crash on exception**
+	- **Where:** [backend/agents/risk_scoring.py](backend/agents/risk_scoring.py)
+	- **What:** Ensure `_compute_risk()` always returns a `(score, label)` tuple on all paths.
+	- **Impact:** Prevents intermittent 500s and missing results under error conditions.
+
+2) **FHIR system always ICD-10 even when ICD-11**
+	- **Where:** [backend/routes/code.py](backend/routes/code.py)
+	- **What:** Set `code.coding.system` dynamically based on `icd_version` or candidate metadata.
+	- **Impact:** Avoids compliance errors and claim rejections.
+
+3) **Schema drift on coding_results writes**
+	- **Where:** [backend/agents/risk_scoring.py](backend/agents/risk_scoring.py) + migrations in [migrations/schema](migrations/schema)
+	- **What:** Align DB schema and write payloads for fields like `icd_codes_full`, `drg_flag`.
+	- **Impact:** Eliminates silent data loss and analytics inconsistencies.
+
+4) **Audit evidence table referenced but missing**
+	- **Where:** [backend/agents/audit_comparison.py](backend/agents/audit_comparison.py) + migrations in [migrations/schema](migrations/schema)
+	- **What:** Either create `icd_evidence` or remove the lookup and use extraction evidence.
+	- **Impact:** Restores audit trail credibility for reviewers.
+
+### P1 — High (stability + scale risks)
+
+5) **Blocking DB calls inside async nodes**
+	- **Where:** [backend/agents/financial_calculator.py](backend/agents/financial_calculator.py), [backend/agents/cpt_resolver.py](backend/agents/cpt_resolver.py)
+	- **What:** Use async DB client or run blocking work in a thread executor.
+	- **Impact:** Prevents concurrency collapse under load.
+
+6) **Frontend response types out of date**
+	- **Where:** [frontend/src/types/coding.ts](frontend/src/types/coding.ts)
+	- **What:** Add `decision_trace`, extended `mapping_path` values, ICD-11 fields.
+	- **Impact:** Prevents UI runtime breakage and missing data.
+
+7) **WHO API client re-created per request**
+	- **Where:** [backend/services/who_icd_service.py](backend/services/who_icd_service.py)
+	- **What:** Reuse a global `httpx.AsyncClient` and close on shutdown.
+	- **Impact:** Reduces latency and improves reliability under burst traffic.
+
+### P2 — Medium (quality + correctness)
+
+8) **Mixed ICD-10 and ICD-11 candidate sets**
+	- **Where:** [backend/agents/icd_decision.py](backend/agents/icd_decision.py)
+	- **What:** Enforce single-system candidate lists based on `icd_version`.
+	- **Impact:** Prevents wrong-code-system selections.
+
+9) **Evidence extraction too naive**
+	- **Where:** [backend/agents/clinical_extractor.py](backend/agents/clinical_extractor.py) + [backend/agents/audit_comparison.py](backend/agents/audit_comparison.py)
+	- **What:** Prefer LLM-extracted evidence field or semantic matching.
+	- **Impact:** Improves audit trust and defensibility.
+
+10) **CPT model loaded at import time**
+	- **Where:** [backend/agents/cpt_resolver.py](backend/agents/cpt_resolver.py)
+	- **What:** Lazy-load the embedding model like ICD embedding node.
+	- **Impact:** Faster cold starts and lower memory spikes.
+
+### P3 — Low (polish + clarity)
+
+11) **CORS hard-coded for localhost**
+	- **Where:** [backend/main.py](backend/main.py)
+	- **What:** Move origins to config/env.
+	- **Impact:** Smoother production deployments.
+
+12) **Default reimbursement values may mislead**
+	- **Where:** [backend/services/who_icd_service.py](backend/services/who_icd_service.py)
+	- **What:** Use null or payer-specific lookup when reimbursement is unknown.
+	- **Impact:** Prevents misleading financial analytics.
+
 ## 🔴 P0 — Critical (must fix before any serious pilot)
 
 ### 1) Risk scoring can crash on error
