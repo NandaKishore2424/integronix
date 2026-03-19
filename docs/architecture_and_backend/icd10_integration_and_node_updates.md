@@ -1,103 +1,107 @@
-# ICD-10 Integration + Node Updates (March 2026)
+# ICD Integration & Dynamic Routing Logic
 
-This document summarizes the ICD-10-CM integration work and the recent LangGraph node updates, including inputs/outputs, routing logic, and quality considerations.
+This document provides a detailed technical explanation of how the Integronix system handles both ICD-10-CM and ICD-11 coding standards. The core of this functionality is a dynamic routing mechanism that selects the appropriate coding path based on organization-specific settings.
 
----
-
-## 1) ICD-10-CM Integration (Data + Pipeline)
-
-### 1.1 Data Sources
-- **Order File (TXT):** Full ICD-10-CM code list and descriptions.
-- **Tabular XML:** Official hierarchy + coding rules.
-- **Index XML:** Search terms, synonyms, and redirects.
-
-### 1.2 Database Tables Used
-- **icd_codes** — Master code list (description, cc/mcc, embedding, billable).
-- **icd_code_hierarchy** — Parent/child relationships from Tabular XML.
-- **icd_code_metadata** — Includes/excludes, code-first, notes.
-- **icd_index_terms** — Search terms for fast ICD lookups.
-
-### 1.3 Parsing & Loading
-**Modules**
-- `backend/services/icd_parsers.py`
-- `backend/services/icd_loader_service.py`
-- `backend/services/icd_ingestion_service.py`
-
-**Key Decisions**
-- **Billable flag computed from hierarchy** (leaf nodes billable).
-- **Index terms allow partial codes** (FK removed on index codes).
-- **Invalid index codes filtered** (e.g., `I63.-`).
-
-### 1.4 Ingestion Outputs
-- **icd_codes:** 98,186
-- **icd_code_hierarchy:** 46,881
-- **icd_code_metadata:** 46,881
-- **icd_index_terms:** 70,385
-- **Invalid index codes filtered:** 6,955
+See the [System Architecture Diagram](diagrams.md#system-architecture-diagram) for a visual overview.
 
 ---
 
-## 2) Routing & Provider Layer (ICD-10 vs ICD-11)
+## 1. The Routing Decision: `org_settings`
 
-### 2.1 Org Settings → Routing
-`org_settings` determines the routing:
-- `icd_version` (ICD-10 vs ICD-11)
-- `claim_scheme`
-- `coding_mode`
+At the very beginning of every coding pipeline run, the system fetches the configuration for the client's organization from the `org_settings` table. Two columns are critical for routing:
 
-### 2.2 Provider Abstraction
-The **ICD provider** chooses the correct data source:
-- **ICD-10** → internal DB + index terms + embeddings
-- **ICD-11** → WHO ICD API (MMS / Foundation)
+-   `icd_version`: Can be `'ICD-10'` or `'ICD-11'`.
+-   `claim_scheme`: A string indicating the billing standard (e.g., `'default'`, `'ayushman'`, `'cghs'`).
 
-This provider layer is used both by:
-- `/icd/search` route (explicit search)
-- Phase 3 fallback candidate augmentation inside the pipeline
+This information is injected into the `CodingState` and used by the `snomed_resolver` node to make a crucial decision, as detailed in the [SNOMED Flow documentation](langgraph_snomed_flow.md).
 
----
+The logic is simple but powerful:
+```python
+# In backend/agents/snomed_resolver.py
+use_who_api = bool(
+    (claim_scheme in {"ayushman", "cghs"}) or (icd_version == "ICD-11")
+)
+```
 
-## 3) LangGraph Node Updates (Phases 1–3)
-
-### Phase 1 — Org Settings Injection
-**What changed**
-- `CodingState` now carries `icd_version`, `claim_scheme`, `coding_mode`.
-- `/code/run` and `/code/run-pdf` inject org settings at the start.
-
-**Why**
-Ensures downstream nodes consistently route to ICD-10 or ICD-11.
+This boolean flag dictates whether to use the modern WHO API or our internal ICD-10 database.
 
 ---
 
-### Phase 2 — WHO API Routing Guard
-**What changed**
-- `snomed_resolver` only calls WHO ICD API if `icd_version = ICD-11`.
-- Otherwise it skips WHO and uses SNOMED/ICD-10 flows.
+## 2. Path A: The ICD-11 / WHO API Workflow
 
-**Why**
-Prevents unnecessary WHO calls and enforces policy routing.
+When `use_who_api` is `True`, the system uses our `who_icd_service` to connect to the official WHO ICD-API v2. This is the preferred path for accuracy and compliance with modern standards.
+
+### 2.1 Request Flow
+
+1.  **Service Called**: `snomed_resolver_node` calls `who_icd_service.search_icd()`.
+2.  **Authentication**: The service transparently handles OAuth2 authentication with the WHO API, requesting a token using our client credentials and caching it for subsequent requests to minimize latency.
+3.  **API Request**: It constructs a `GET` request to the WHO API's `/icd/release/11/.../search` endpoint.
+    *   **URL Parameters**: The primary parameter is `q={diagnosis_text}`, where `diagnosis_text` is the clinical term extracted by the `clinical_extractor` node.
+    *   **Headers**: Includes the `Authorization: Bearer {access_token}` and `API-Version: v2` headers.
+
+### 2.2 Response Flow
+
+1.  **WHO API Response**: The WHO API returns a JSON object containing a list of `destinationEntities`. Each entity represents a potential ICD-11 code match. A simplified example of the response for the query "Cholera" is:
+    ```json
+    {
+      "destinationEntities": [
+        {
+          "id": "http://id.who.int/icd/entity/1335340813",
+          "title": "<b>Cholera</b>",
+          "theCode": "1A00",
+          "score": 13.952816
+        },
+        {
+          "id": "http://id.who.int/icd/entity/1296093773",
+          "title": "Classical <b>cholera</b>",
+          "theCode": "1A00.0",
+          "score": 12.74399
+        }
+      ]
+    }
+    ```
+2.  **Internal Processing**: Our `who_icd_service` parses this response.
+3.  **Data Enrichment**: For each result, it queries our internal `icd_codes` database table to fetch additional metadata that the WHO API does not provide, such as `is_cc`, `is_mcc`, and `base_reimbursement` values.
+4.  **State Update**: The enriched list of candidates is used to populate `state.candidate_icd_codes`. The `mapping_path` is set to `"who_api_icd11"` or `"who_api_icd10"`.
+
+The workflow then proceeds directly to the `icd_decision_node`, bypassing all SNOMED and embedding steps.
 
 ---
 
-### Phase 3 — Candidate Augmentation + Decision Trace
-**What changed**
-- If candidates are missing or too few, the provider is called to **augment**.
-- Candidates are merged and deduped before decision scoring.
-- `decision_trace` is added to the response for auditability.
+## 3. Path B: The ICD-10-CM / Internal Database Workflow
 
-**Why**
-Improves coverage when direct mapping or embedding yields too few options.
+When `use_who_api` is `False`, the system relies entirely on our internal, pre-processed ICD-10-CM database.
 
----
+### 3.1 Data Sources & Ingestion
 
-## 4) Node-by-Node Inputs/Outputs (Current)
+The internal database is built from official ICD-10-CM data files. The ingestion pipeline is detailed in the [ICD-10-CM Ingestion Pipeline document](icd10cm_ingestion_pipeline.md). The key tables used in this workflow are:
 
-### Node 1 — Document Processing
-**Input:** PDF bytes or raw text
-**Output:** `raw_text`
-**Deterministic**
+-   `icd_codes`: The master list of all 98,000+ ICD-10-CM codes, their descriptions, and our calculated flags (`is_billable`, `is_cc`, `is_mcc`). This table also contains the vector embeddings for semantic search.
+-   `snomed_concepts`: A table of SNOMED-CT concept IDs and their descriptions.
+-   `snomed_icd_map`: A crucial crosswalk table that maps SNOMED-CT concepts directly to ICD-10-CM codes.
 
-### Node 2 — Clinical Extraction (LLM)
-**Input:** `raw_text`
+### 3.2 Request & Response Flow (Internal)
+
+This path involves a sequence of internal database queries across multiple graph nodes:
+
+1.  **SNOMED Resolution (`snomed_resolver_node`)**:
+    *   **Request**: Takes the LLM-suggested SNOMED code from `state.structured_entities`.
+    *   **Action**: Queries the `snomed_concepts` table to validate the code.
+    *   **Response**: Populates `state.resolved_snomed_code`.
+
+2.  **SNOMED-to-ICD Mapping (`snomed_icd_map_node`)**:
+    *   **Request**: Uses `state.resolved_snomed_code`.
+    *   **Action**: Performs a `JOIN` between `snomed_icd_map` and `icd_codes` to find all linked, billable ICD-10-CM codes.
+    *   **Response**: If mappings are found, `state.candidate_icd_codes` is populated, and `mapping_path` is set to `"direct"`.
+
+3.  **Embedding Fallback (`icd_embedding_node`)**:
+    *   **Condition**: This node only runs if the SNOMED mapping step returns zero candidates.
+    *   **Request**: Uses the original `diagnosis_text`.
+    *   **Action**: Generates a vector embedding of the text and performs a cosine similarity search against the `embedding` column in the `icd_codes` table using `pgvector`.
+    *   **Response**: Populates `state.candidate_icd_codes` with the top 5 most similar results and sets `mapping_path` to `"embedding_fallback"`.
+
+Finally, just like in Path A, the populated `candidate_icd_codes` list is passed to the `icd_decision_node` for final selection. This dual-path, fallback-heavy architecture ensures both compliance with modern standards and robustness for legacy systems.
+
 **Output:** `structured_entities`, `extraction_metadata`
 **LLM** (Groq)
 

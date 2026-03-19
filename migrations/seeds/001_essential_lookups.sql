@@ -26,7 +26,10 @@ VALUES
     ('709044004',  'Chronic kidney disease stage 3',  '(disorder)',  'Clinical finding'),
     ('73211009',   'Diabetes mellitus',               '(disorder)',  'Clinical finding'),
     ('59621000',   'Essential hypertension',          '(disorder)',  'Clinical finding'),
-    ('233604007',  'Pneumonia',                       '(disorder)',  'Clinical finding');
+  ('233604007',  'Pneumonia',                       '(disorder)',  'Clinical finding'),
+  ('57054005',   'Non-ST elevation myocardial infarction', '(disorder)', 'Clinical finding'),
+  ('441481004',  'Acute systolic heart failure',    '(disorder)',  'Clinical finding'),
+  ('53084003',   'Pneumonia caused by Klebsiella',  '(disorder)',  'Clinical finding');
 
 -- ── Step 3: SNOMED → ICD Crosswalk (6 mappings) ───────────────────────────
 -- These represent the deterministic backbone used by snomed_icd_map node
@@ -82,7 +85,9 @@ VALUES
   ('I25.10', 'Atherosclerotic heart disease of native coronary artery',           'Circulatory', 'CAD',           true, true,  false, 2500),
   ('I50.32', 'Chronic diastolic (congestive) heart failure',                      'Circulatory', 'Heart failure', true, true,  false, 2600),
   ('I50.22', 'Chronic systolic (congestive) heart failure',                       'Circulatory', 'Heart failure', true, true,  false, 2700),
+  ('I50.21', 'Acute systolic (congestive) heart failure',                         'Circulatory', 'Heart failure', true, true,  true,  3200),
   ('I21.9',  'Acute myocardial infarction, unspecified',                          'Circulatory', 'MI',            true, false, true,  5500),
+  ('I21.4',  'Non-ST elevation (NSTEMI) myocardial infarction',                   'Circulatory', 'MI',            true, false, true,  5600),
   ('I48.91', 'Unspecified atrial fibrillation',                                   'Circulatory', 'Arrhythmia',    true, true,  false, 2000),
   ('I63.9',  'Cerebral infarction, unspecified',                                  'Circulatory', 'Stroke',        true, false, true,  6000),
   ('I82.401','Acute thrombosis of unspecified deep veins of right lower extremity','Circulatory','DVT',           true, true,  false, 1800),
@@ -99,6 +104,7 @@ VALUES
   ('J45.51', 'Severe persistent asthma with acute exacerbation',                  'Respiratory', 'Asthma',        true, false, true,  3500),
   ('J22',    'Unspecified acute lower respiratory infection',                      'Respiratory', 'LRTI',          true, false, false, 1200),
   ('J15.9',  'Unspecified bacterial pneumonia',                                   'Respiratory', 'Pneumonia',     true, true,  false, 2400),
+  ('J15.0',  'Pneumonia due to Klebsiella pneumoniae',                             'Respiratory', 'Pneumonia',     true, true,  false, 2500),
   ('J81.0',  'Acute pulmonary edema',                                             'Respiratory', 'Pulmonary',     true, false, true,  4200)
 ON CONFLICT (code) DO NOTHING;
 
@@ -165,6 +171,7 @@ VALUES
   ('B02.9',  'Zoster without complications',                                      'Infectious', 'Viral',         true, false, false,  800),
   ('L03.90', 'Cellulitis, unspecified',                                           'Skin', 'Skin infection',      true, false, false,  900),
   ('N39.0',  'Urinary tract infection, site not specified',                       'Genitourinary', 'UTI',        true, false, false,  700),
+  ('N18.30', 'Chronic kidney disease, stage 3, unspecified',                      'Genitourinary', 'CKD',        true, true,  false, 1600),
   ('N18.5',  'Chronic kidney disease, stage 5',                                   'Genitourinary', 'CKD',        true, true,  false, 2200),
   ('N18.6',  'End stage renal disease',                                           'Genitourinary', 'ESRD',       true, false, true,  4500)
 ON CONFLICT (code) DO NOTHING;
@@ -195,6 +202,10 @@ VALUES
   ('13645005',  'J44.9', 'exact',    0.97, true,  'manual', 'COPD to unspecified COPD'),
   ('195967001', 'J45.909','exact',   0.96, true,  'manual', 'Asthma to unspecified asthma'),
   ('35489007',  'F32.9', 'broader',  0.88, true,  'manual', 'Depressive disorder to single episode'),
-  ('197480006', 'F41.9', 'broader',  0.87, true,  'manual', 'Anxiety disorder to unspecified anxiety')
+  ('197480006', 'F41.9', 'broader',  0.87, true,  'manual', 'Anxiety disorder to unspecified anxiety'),
+  ('57054005',  'I21.4', 'exact',    0.99, true,  'manual', 'NSTEMI Specific'),
+  ('441481004', 'I50.21','exact',    0.99, true,  'manual', 'Acute Systolic HF'),
+  ('53084003',  'J15.0', 'exact',    0.99, true,  'manual', 'Klebsiella Pathogen'),
+  ('709044004', 'N18.30','exact',    0.95, false, 'manual', 'CKD Stage 3 Unspecified')
   -- Note: Low back pain (279039007) intentionally has NO mapping → triggers embedding fallback
 ON CONFLICT (snomed_code, icd_code) DO NOTHING;

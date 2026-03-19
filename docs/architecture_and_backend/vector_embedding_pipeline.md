@@ -1,103 +1,72 @@
-# 15 — Embedding Pipeline for ICD Similarity Search
+# Vector Embedding Pipeline for Semantic Search
 
-## Purpose
+## 1. Purpose
 
-When SNOMED direct mapping fails, we use **semantic embedding similarity** to find the best matching ICD-10 codes from our internal database.
+The vector embedding pipeline serves as a critical **fallback mechanism** in our agentic workflow. When the primary, high-precision mapping paths (e.g., WHO API or direct SNOMED-to-ICD crosswalk) fail to produce candidate codes, the system uses semantic vector search to find the most clinically similar ICD codes from our database.
 
-This is powered by **pgvector** inside Supabase/PostgreSQL.
-
----
-
-## Embedding Model Choice
-
-### Recommended: `sentence-transformers/all-MiniLM-L6-v2`
-
-| Property | Value |
-|---|---|
-| Output dimensions | 384 |
-| Size | ~80MB |
-| Speed | Fast (CPU-friendly) |
-| Quality | Strong for medical text |
-| License | Apache 2.0 (free) |
-
-**Why 384 dimensions?**
-Our Supabase `icd_codes.embedding` column is defined as `VECTOR(384)` — an exact match.
-
-**Alternative:** OpenAI `text-embedding-ada-002` (1536 dims) — higher quality, costs money, requires updating column to `VECTOR(1536)`.
-
-For POC: Use MiniLM (free, fast, no API cost).
-For production: Evaluate OpenAI or a medical-domain fine-tuned model.
+This ensures robustness, guaranteeing that the system can provide relevant suggestions even for ambiguous or poorly defined clinical text. This process is powered by the `pgvector` extension in our Supabase PostgreSQL database.
 
 ---
 
-## Phase 1: Offline Batch — Generate and Store ICD Embeddings
+## 2. The Embedding Model
 
-This runs **once** when the ICD database is seeded. Run it again when new codes are added.
+To ensure consistency between the data at rest and the data at runtime, we use the same embedding model throughout the entire pipeline.
 
-### Script: `db/generate_embeddings.py`
-
-```python
-from sentence_transformers import SentenceTransformer
-import psycopg2
-import json
-
-# Load model
-model = SentenceTransformer("all-MiniLM-L6-v2")
-
-# Connect to Supabase/PostgreSQL
-conn = psycopg2.connect(
-    host="your-supabase-host",
-    dbname="postgres",
-    user="postgres",
-    password="your-password",
-    port=5432
-)
-cur = conn.cursor()
-
-# Fetch all ICD codes without embeddings
-cur.execute("SELECT code, description FROM icd_codes WHERE embedding IS NULL")
-rows = cur.fetchall()
-
-print(f"Generating embeddings for {len(rows)} ICD codes...")
-
-batch_size = 64
-for i in range(0, len(rows), batch_size):
-    batch = rows[i:i + batch_size]
-    codes = [row[0] for row in batch]
-    descriptions = [row[1] for row in batch]
-
-    # Generate embeddings for the batch
-    embeddings = model.encode(descriptions, normalize_embeddings=True)
-
-    # Update the DB
-    for code, embedding in zip(codes, embeddings):
-        cur.execute(
-            "UPDATE icd_codes SET embedding = %s WHERE code = %s",
-            (json.dumps(embedding.tolist()), code)
-        )
-
-conn.commit()
-cur.close()
-conn.close()
-
-print("Done. All ICD embeddings stored.")
-```
-
-**What "normalize_embeddings=True" does:**
-Normalizes to unit length — required for correct cosine similarity calculations.
+-   **Model**: `sentence-transformers/all-MiniLM-L6-v2`
+-   **Output Dimensions**: **384**
+-   **Reasoning**: This model provides an excellent balance of speed, size (~80MB), and quality for semantic similarity tasks. Its 384 dimensions are a perfect match for our database schema, where the `embedding` columns are defined as `VECTOR(384)`. The Apache 2.0 license also makes it ideal for commercial use.
 
 ---
 
-## Phase 2: Runtime — Query at Request Time
+## 3. Phase 1: Offline Batch Embedding
 
-When the Clinical Extraction Agent produces a diagnosis string at runtime, we:
-1. Generate its embedding on the fly
-2. Query pgvector for the most similar ICD codes
+This is a one-time or periodic process that populates the `embedding` column for our core database tables. It is orchestrated by the `backend/scripts/generate_embeddings.py` script.
 
-### In FastAPI + LangGraph ICD Retrieval Node
+### Execution Flow
 
-```python
-from sentence_transformers import SentenceTransformer
+1.  **Load Model**: The script begins by loading the `all-MiniLM-L6-v2` model into memory.
+2.  **Fetch Un-embedded Rows**: It makes `GET` requests to the Supabase REST API to fetch all rows from two key tables where the `embedding` column is `NULL`:
+    *   `icd_codes`
+    *   `snomed_concepts`
+3.  **Generate Embeddings**: For each row, it generates a 384-dimension vector embedding.
+    *   For `icd_codes`, the input text is a combination of the code and its description (e.g., `"E11.9 Type 2 diabetes mellitus without complications"`) to create a richer semantic representation.
+    *   For `snomed_concepts`, the input text is simply the concept's description.
+    *   The `normalize_embeddings=True` parameter is used, which is essential for accurate cosine similarity calculations in `pgvector`.
+4.  **Update Database**: For each generated embedding, the script sends a `PATCH` request back to the Supabase API to update the specific row, filling in the `embedding` column.
+
+This offline process ensures that runtime queries are fast, as the expensive work of embedding our entire knowledge base is done ahead of time.
+
+---
+
+## 4. Phase 2: Runtime Semantic Search
+
+This phase occurs live within the `icd_embedding_node` when it's triggered by the LangGraph router.
+
+### Execution Flow
+
+1.  **Trigger**: The `_route_after_mapping` conditional edge directs the workflow to this node only if the `candidate_icd_codes` list is empty after the preceding mapping steps.
+2.  **Lazy-Load Model**: The `icd_embedding_node` lazy-loads the `sentence-transformers` model. This is a critical optimization that ensures the ~80MB model is only loaded into memory if this fallback path is actually needed, keeping the primary workflow lightweight.
+3.  **Generate Query Embedding**: It takes the `primary_text` from the `structured_entities` and generates a 384-dimension query vector on the fly using the same `all-MiniLM-L6-v2` model.
+4.  **Execute RPC Search**: It calls a PostgreSQL stored procedure in our database named `match_icd_codes` via a Supabase `rpc` call.
+    ```python
+    # In backend/agents/icd_embedding.py
+    candidates = await rpc(
+        "match_icd_codes",
+        {
+            "query_embedding": _vector_to_pg_literal(embedding),
+            "match_threshold": SIMILARITY_THRESHOLD, # e.g., 0.55
+            "match_count": EMBEDDING_TOP_K,          # e.g., 5
+        },
+    )
+    ```
+5.  **Database-Side Logic (`match_icd_codes` function)**:
+    *   The stored procedure takes the query embedding and performs a **cosine similarity** search against the `embedding` column of the `icd_codes` table.
+    *   The `<=>` operator from `pgvector` is used to calculate the distance.
+    *   It filters the results to only include codes where the similarity is above the `match_threshold` and returns the top `match_count` results.
+6.  **Populate State**: The results from the RPC call are used to populate the `state.candidate_icd_codes` list. The `mapping_path` is set to `"embedding_fallback"` for auditability.
+
+The workflow then proceeds to the `icd_decision_node`, which now has a list of semantically relevant candidates to score and rank.
+
 import json
 import asyncpg
 
