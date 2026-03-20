@@ -14,6 +14,10 @@ const RESOLUTION_COLORS: Record<MappingPath, string> = {
     no_snomed: 'text-orange-400 bg-orange-500/10 border-orange-500/25',
     embedding_failed: 'text-danger bg-danger/10 border-danger/25',
     unknown: 'text-slate-500 bg-white/[0.03] border-white/[0.06]',
+    who_api_icd11: 'text-cyan-400 bg-cyan-500/10 border-cyan-500/25',
+    who_api_icd10: 'text-cyan-400 bg-cyan-500/10 border-cyan-500/25',
+    provider_fallback: 'text-warning bg-warning/10 border-warning/25',
+    provider_augmented: 'text-amber-400 bg-amber-500/10 border-amber-500/25',
 };
 
 const RESOLUTION_LABELS: Record<MappingPath, string> = {
@@ -23,6 +27,10 @@ const RESOLUTION_LABELS: Record<MappingPath, string> = {
     no_snomed: '⚠ Ontology Gap',
     embedding_failed: '✕ Pipeline Error',
     unknown: '— Unresolved',
+    who_api_icd11: '🌐 WHO ICD-11',
+    who_api_icd10: '🌐 WHO ICD-10',
+    provider_fallback: '📇 Provider Index',
+    provider_augmented: '📇 Provider + Engine',
 };
 
 export default function IcdCodeCard({ result }: Props) {

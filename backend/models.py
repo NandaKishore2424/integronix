@@ -41,7 +41,24 @@ class ObservationEntity(BaseModel):
     unit: Optional[str] = None
 
 
+class PatientDemographics(BaseModel):
+    """Documented patient identifiers only — never infer from ICD text."""
+
+    full_name: Optional[str] = None
+    date_of_birth: Optional[str] = None  # YYYY-MM-DD when documented
+    age_years: Optional[int] = None
+    sex: Optional[str] = None
+
+    @field_validator("full_name", "date_of_birth", "sex", mode="before")
+    @classmethod
+    def sanitize_null_strings(cls, v):
+        if isinstance(v, str) and v.strip().lower() in ("null", "none", ""):
+            return None
+        return v
+
+
 class ExtractionResult(BaseModel):
+    patient: Optional[PatientDemographics] = None
     diagnoses: List[DiagnosisEntity]
     observations: List[ObservationEntity] = []
     procedures_and_services: List[str] = []
@@ -138,6 +155,10 @@ class CodeResponse(BaseModel):
     risk_label:           str
     extraction_metadata:  dict = {}
     fhir_condition:       Optional[dict] = None
+    # Demographics from clinical_extract (for claims / FHIR subject.display)
+    patient_name:         Optional[str] = None
+    patient_dob:          Optional[str] = None
+    patient_sex:          Optional[str] = None
     error_at:             Optional[str] = None
     financial_summary:    Optional[dict] = None  # RCM financial breakdown
     decision_trace:       Optional[dict] = None

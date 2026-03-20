@@ -113,15 +113,28 @@ async def upsert_icd_code_from_who(
         return
     try:
         client = await get_client()
+        # Must match icd_codes columns (003_medical_ontology.sql): version + system,
+        # not icd_version / source (PostgREST PGRST204 if unknown columns).
+        ver = (icd_version or "ICD-11").strip()
+        ver_u = ver.upper()
+        if "11" in ver_u:
+            system_uri = "http://id.who.int/icd11/mms"
+            version_col = ver if ver else "ICD-11"
+        else:
+            system_uri = "http://hl7.org/fhir/sid/icd-10"
+            version_col = ver if ver else "ICD-10"
+
         payload = {
             "code":               code.strip(),
             "description":        description.strip(),
-            "icd_version":        icd_version,
+            "chapter":            "WHO API cache",
+            "category":           "supplemental",
             "is_billable":        True,
             "is_cc":              False,
             "is_mcc":             False,
-            "base_reimbursement": 5000.0,   # Conservative default until manually set
-            "source":             "who_icd_api",
+            "version":            version_col,
+            "system":             system_uri,
+            "base_reimbursement": 5000.0,  # Conservative default until manually set
         }
         response = await client.post(
             "/icd_codes",

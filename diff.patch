@@ -1,0 +1,938 @@
+﻿diff --git a/backend/agents/cpt_resolver.py b/backend/agents/cpt_resolver.py
+index a92283a..c7a9472 100644
+--- a/backend/agents/cpt_resolver.py
++++ b/backend/agents/cpt_resolver.py
+@@ -51,28 +51,49 @@ async def cpt_resolver_node(state: CodingState) -> CodingState:
+             # 1. Generate the semantic vector for the doctor's text
+             embedding_vector = _embedding_model.encode(procedure_text).tolist()
+             
+-            # 2. Query our custom Supabase RPC for a semantic search
+-            response = supabase.rpc(
++            # 2. Query our custom Supabase RPC for a semantic search.
++            # First pass is strict; if we get no match, do a second pass with a
++            # lower threshold so common discharge-procedure phrases still map.
++            first_pass_response = supabase.rpc(
+                 "match_cpt_codes",
+                 {
+                     "query_embedding": embedding_vector,
+-                    "match_threshold": 0.55, # Minimum confidence threshold
+-                    "match_count": 1         # Get the single best matched standard code
+-                }
++                    "match_threshold": 0.55,
++                    "match_count": 1,
++                },
+             ).execute()
+-            
+-            matches = response.data
+-            if matches and len(matches) > 0:
++
++            matches = first_pass_response.data or []
++            if not matches:
++                second_pass_response = supabase.rpc(
++                    "match_cpt_codes",
++                    {
++                        "query_embedding": embedding_vector,
++                        "match_threshold": 0.42,
++                        "match_count": 3,
++                    },
++                ).execute()
++                matches = second_pass_response.data or []
++
++            if matches:
+                 best_match = matches[0]
+-                all_cpt_matches.append({
+-                    "original_text": procedure_text,
+-                    "code": best_match["code"],
+-                    "description": best_match["description"],
+-                    "type": best_match["code_type"],
+-                    "base_price": float(best_match["base_price"]),
+-                    "confidence": float(best_match["similarity"])
+-                })
+-                log.info("cpt_matched", session_id=session_id, original=procedure_text, code=best_match["code"], confidence=best_match["similarity"])
++                all_cpt_matches.append(
++                    {
++                        "original_text": procedure_text,
++                        "code": best_match.get("code"),
++                        "description": best_match.get("description"),
++                        "type": best_match.get("code_type"),
++                        "base_price": float(best_match.get("base_price") or 0.0),
++                        "confidence": float(best_match.get("similarity") or 0.0),
++                    }
++                )
++                log.info(
++                    "cpt_matched",
++                    session_id=session_id,
++                    original=procedure_text,
++                    code=best_match.get("code"),
++                    confidence=best_match.get("similarity"),
++                )
+             else:
+                 log.warning("cpt_no_match", session_id=session_id, original=procedure_text)
+                 
+diff --git a/backend/database.py b/backend/database.py
+index 76b2b87..af93038 100644
+--- a/backend/database.py
++++ b/backend/database.py
+@@ -113,15 +113,28 @@ async def upsert_icd_code_from_who(
+         return
+     try:
+         client = await get_client()
++        # Must match icd_codes columns (003_medical_ontology.sql): version + system,
++        # not icd_version / source (PostgREST PGRST204 if unknown columns).
++        ver = (icd_version or "ICD-11").strip()
++        ver_u = ver.upper()
++        if "11" in ver_u:
++            system_uri = "http://id.who.int/icd11/mms"
++            version_col = ver if ver else "ICD-11"
++        else:
++            system_uri = "http://hl7.org/fhir/sid/icd-10"
++            version_col = ver if ver else "ICD-10"
++
+         payload = {
+             "code":               code.strip(),
+             "description":        description.strip(),
+-            "icd_version":        icd_version,
++            "chapter":            "WHO API cache",
++            "category":           "supplemental",
+             "is_billable":        True,
+             "is_cc":              False,
+             "is_mcc":             False,
+-            "base_reimbursement": 5000.0,   # Conservative default until manually set
+-            "source":             "who_icd_api",
++            "version":            version_col,
++            "system":             system_uri,
++            "base_reimbursement": 5000.0,  # Conservative default until manually set
+         }
+         response = await client.post(
+             "/icd_codes",
+diff --git a/backend/models.py b/backend/models.py
+index 5b5d1df..9510325 100644
+--- a/backend/models.py
++++ b/backend/models.py
+@@ -41,7 +41,24 @@ class ObservationEntity(BaseModel):
+     unit: Optional[str] = None
+ 
+ 
++class PatientDemographics(BaseModel):
++    """Documented patient identifiers only ΓÇö never infer from ICD text."""
++
++    full_name: Optional[str] = None
++    date_of_birth: Optional[str] = None  # YYYY-MM-DD when documented
++    age_years: Optional[int] = None
++    sex: Optional[str] = None
++
++    @field_validator("full_name", "date_of_birth", "sex", mode="before")
++    @classmethod
++    def sanitize_null_strings(cls, v):
++        if isinstance(v, str) and v.strip().lower() in ("null", "none", ""):
++            return None
++        return v
++
++
+ class ExtractionResult(BaseModel):
++    patient: Optional[PatientDemographics] = None
+     diagnoses: List[DiagnosisEntity]
+     observations: List[ObservationEntity] = []
+     procedures_and_services: List[str] = []
+@@ -138,6 +155,10 @@ class CodeResponse(BaseModel):
+     risk_label:           str
+     extraction_metadata:  dict = {}
+     fhir_condition:       Optional[dict] = None
++    # Demographics from clinical_extract (for claims / FHIR subject.display)
++    patient_name:         Optional[str] = None
++    patient_dob:          Optional[str] = None
++    patient_sex:          Optional[str] = None
+     error_at:             Optional[str] = None
+     financial_summary:    Optional[dict] = None  # RCM financial breakdown
+     decision_trace:       Optional[dict] = None
+diff --git a/backend/routes/cases.py b/backend/routes/cases.py
+index e478f3e..ba7669a 100644
+--- a/backend/routes/cases.py
++++ b/backend/routes/cases.py
+@@ -221,6 +221,19 @@ async def get_case_detail(session_id: str):
+     if not result:
+         raise HTTPException(status_code=404, detail=f"Results for case '{session_id}' not found.")
+ 
++    entities = case.get("structured_entities") or {}
++    patient_block = entities.get("patient") or {}
++    patient_name = None
++    patient_dob = None
++    patient_sex = None
++    if isinstance(patient_block, dict):
++        patient_name = (
++            (patient_block.get("full_name") or patient_block.get("name") or "").strip() or None
++        )
++        patient_dob = (patient_block.get("date_of_birth") or "").strip() or None
++        raw_sex = (patient_block.get("sex") or "").strip()
++        patient_sex = raw_sex.upper() if raw_sex else None
++
+     # Build a CodeResponse-compatible dict so frontend can reuse ResultsPanel
+     return {
+         "session_id":          session_id,
+@@ -230,6 +243,9 @@ async def get_case_detail(session_id: str):
+         "resolved_snomed_code": result.get("resolved_snomed_code"),
+         "candidates":          result.get("candidate_codes", []),
+         "icd_codes":           result.get("icd_codes_full", []),
++        # Preserve CPT + financial breakdown when the coder re-opens a case.
++        # These are required for the payer policy gate and the FHIR Claim proposal items.
++        "cpt_codes":           result.get("cpt_codes", []) or [],
+         "discrepancy_type":    result.get("discrepancy_type"),
+         "discrepancy":         result.get("audit_result_json"),
+         "financial_delta":     result.get("financial_delta"),
+@@ -238,6 +254,11 @@ async def get_case_detail(session_id: str):
+         "risk_label":          result.get("risk_label", "UNKNOWN"),
+         "extraction_metadata": {},
+         "fhir_condition":      result.get("fhir_condition"),
++        "patient_name":        patient_name,
++        "patient_dob":         patient_dob,
++        "patient_sex":        patient_sex,
++        "financial_summary":   result.get("financial_summary"),
++        "decision_trace":      None,
+         "error_at":            None,
+         "document_source":     case.get("document_source", "text_input"),
+         "ocr_used":            case.get("ocr_used", False),
+diff --git a/backend/routes/claims.py b/backend/routes/claims.py
+index ea380f1..65378c8 100644
+--- a/backend/routes/claims.py
++++ b/backend/routes/claims.py
+@@ -1,10 +1,13 @@
++import uuid
+ from fastapi import APIRouter, HTTPException, Depends, Header
+ from pydantic import BaseModel
+ from typing import Optional, List, Any
+ from supabase import create_client, Client
+ from logger import get_logger
+ from config import settings
+-from services.rules_engine import evaluate_claim
++from services.payer_policy_gate import run_payer_policy_gate
++from services.org_settings_service import get_org_settings
++from services.fhir_claim_builder import build_fhir_claim_proposal
+ 
+ log = get_logger(__name__)
+ router = APIRouter(prefix="/claims", tags=["claims"])
+@@ -19,8 +22,9 @@ class ClaimSubmissionRequest(BaseModel):
+     session_id: str
+     organization_id: str
+     payer_id: str
+-    patient_name: str
+-    patient_dob: str
++    patient_name: Optional[str] = None
++    patient_dob: Optional[str] = None
++    patient_sex: Optional[str] = None
+     total_billed_amount: float
+     claim_data: dict
+     submission_notes: Optional[str] = None
+@@ -44,9 +48,114 @@ async def submit_claim(req: ClaimSubmissionRequest):
+         # Ignore errors if the table doesn't exist yet / not migrated
+         pass
+ 
+-    # ΓöÇΓöÇ RULE ENGINE AUTO-ADJUDICATION ΓöÇΓöÇ
+-    is_approved, denial_reason = evaluate_claim(req.claim_data, req.patient_name)
+-    initial_status = "SUBMITTED" if is_approved else "DENIED"
++    # ΓöÇΓöÇ PAYER POLICY GATE (trustable automation) ΓöÇΓöÇ
++    try:
++        payer_policy_resp = getattr(
++            supabase.table("payers")
++            .select(
++                "id, name, payer_type, base_allowed_multiplier, "
++                "auto_approve_enabled, auto_approve_confidence_min, auto_approve_max_risk, "
++                "auto_approve_requires_patient_dob, auto_approve_requires_patient_sex, "
++                "auto_approve_payer_responsibility_pct, accepted_icd_versions"
++            )
++            .eq("id", req.payer_id)
++            .single(),
++            "execute",
++        )()
++        # Supabase client returns a response object with `.data`
++        payer_policy = None
++        if payer_policy_resp and getattr(payer_policy_resp, "data", None):
++            # `.single()` typically returns an object (not a list), but handle both.
++            if isinstance(payer_policy_resp.data, list):
++                payer_policy = payer_policy_resp.data[0] if payer_policy_resp.data else None
++            else:
++                payer_policy = payer_policy_resp.data
++    except Exception:
++        payer_policy = None
++
++    org_settings = await get_org_settings(req.organization_id) if req.organization_id else None
++
++    gate_report = run_payer_policy_gate(
++        claim_data=req.claim_data,
++        payer_policy=payer_policy or {},
++        org_settings=org_settings,
++    )
++
++    # Store the gate report inside the claim payload so the payer can review reasons.
++    if isinstance(req.claim_data, dict):
++        req.claim_data["payer_gate_report"] = gate_report
++
++    # ΓöÇΓöÇ FHIR CLAIM PROPOSAL ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
++    # Generate the hospital-proposed FHIR Claim artifact and embed it in the
++    # claim payload.  EDI 837 will be derived from the payer-verified version
++    # later (V1.2).
++    if isinstance(req.claim_data, dict):
++        try:
++            # Resolve organization name (fall back to id if unavailable)
++            _org_name_resp = None
++            _org_name = req.organization_id
++            _payer_name = (payer_policy or {}).get("name") or req.payer_id
++            try:
++                _org_resp = getattr(
++                    supabase.table("organizations").select("name").eq("id", req.organization_id).single(),
++                    "execute",
++                )()
++                if _org_resp and getattr(_org_resp, "data", None):
++                    _org_name = _org_resp.data.get("name") or req.organization_id
++            except Exception:
++                pass
++
++            _claim_tmp_id = str(uuid.uuid4())
++            _cd = req.claim_data
++            fhir_proposal = build_fhir_claim_proposal(
++                claim_id=_claim_tmp_id,
++                session_id=req.session_id,
++                organization_id=req.organization_id,
++                organization_name=_org_name,
++                payer_id=req.payer_id,
++                payer_name=_payer_name,
++                patient_name=req.patient_name,
++                patient_dob=req.patient_dob,
++                patient_sex=req.patient_sex,
++                icd_codes=_cd.get("icd_codes") or [],
++                cpt_codes=_cd.get("cpt_codes") or [],
++                financial_summary=_cd.get("financial_summary") or {},
++                icd_version=_cd.get("icd_version") or (org_settings or {}).get("icd_version"),
++                mapping_path=_cd.get("mapping_path"),
++                total_billed_amount=float(req.total_billed_amount or 0.0),
++            )
++            req.claim_data["fhir_claim_proposal"] = fhir_proposal
++            log.info("fhir_claim_proposal_built", session_id=req.session_id)
++        except Exception as fhir_err:
++            log.error("fhir_claim_proposal_failed", error=str(fhir_err), session_id=req.session_id)
++            # Non-fatal: claim submission continues without FHIR proposal
++
++    # Auto-approve only when explicitly enabled by payer and gate passes.
++    initial_status = "SUBMITTED"
++    total_allowed = None
++    total_paid = None
++    patient_resp = None
++    payer_responsibility_pct = None
++
++    if gate_report.get("should_auto_approve"):
++        payer_responsibility_pct = float(payer_policy.get("auto_approve_payer_responsibility_pct") or 0.80)
++        payer_multiplier = float(payer_policy.get("base_allowed_multiplier") or 1.0)
++
++        financial_summary = req.claim_data.get("financial_summary") or {}
++        line_items = financial_summary.get("line_items") or []
++
++        total_allowed = 0.0
++        for item in line_items:
++            base = float(item.get("base_price") or 0.0)
++            total_allowed += base * payer_multiplier
++
++        total_allowed = round(total_allowed, 2)
++        total_allowed = min(total_allowed, float(req.total_billed_amount or 0.0))
++
++        total_paid = round(total_allowed * payer_responsibility_pct, 2)
++        patient_resp = round(total_allowed - total_paid, 2)
++
++        initial_status = "PAID" if payer_responsibility_pct >= 1.0 else "PARTIALLY_PAID"
+ 
+     # Build the claim payload
+     payload = {
+@@ -57,9 +166,12 @@ async def submit_claim(req: ClaimSubmissionRequest):
+         "patient_dob": req.patient_dob,
+         "status": initial_status,
+         "total_billed_amount": req.total_billed_amount,
++        "total_allowed_amount": total_allowed,
++        "total_paid_amount": total_paid,
++        "patient_responsibility": patient_resp,
+         "claim_data": req.claim_data,
+         "submission_notes": req.submission_notes,
+-        "denial_reason": None if is_approved else denial_reason,
++        "denial_reason": None,
+     }
+     
+     try:
+@@ -76,7 +188,11 @@ async def submit_claim(req: ClaimSubmissionRequest):
+                     "claim_id": claim_id,
+                     "previous_status": None,
+                     "new_status": initial_status,
+-                    "action_notes": "Initial Submission." if is_approved else denial_reason 
++                    "action_notes": (
++                        "Auto-approved via payer policy gate."
++                        if gate_report.get("should_auto_approve")
++                        else "Initial submission to payer workflow."
++                    ),
+                 }
+                 getattr(supabase.table("claim_audit_logs").insert(audit_log), "execute")()
+             except Exception as audit_e:
+@@ -374,7 +490,8 @@ async def export_edi_837(claim_id: str):
+     
+     try:
+         # Fetch highly detailed claim snapshot
+-        res = getattr(supabase.table("claims").select("*, organizations(name, address), payers(name, payer_type)").eq("id", claim_id).single(), "execute")()
++        # organizations.address is not in all deployments ΓÇö only select existing columns
++        res = getattr(supabase.table("claims").select("*, organizations(name), payers(name, payer_type)").eq("id", claim_id).single(), "execute")()
+         if not res or not res.data:
+             raise HTTPException(status_code=404, detail="Claim not found")
+         
+diff --git a/backend/routes/code.py b/backend/routes/code.py
+index 87ec798..45921bc 100644
+--- a/backend/routes/code.py
++++ b/backend/routes/code.py
+@@ -42,18 +42,41 @@ def _get_graph():
+ 
+ # ΓöÇΓöÇ FHIR builder ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+ 
+-def _build_fhir_condition(icd_codes: list, session_id: str) -> dict:
++def _fhir_icd_system_for_state(
++    icd_version: Optional[str],
++    mapping_path: Optional[str],
++) -> tuple[str, str]:
++    """Return (coding.system, coding.version) for Condition.code."""
++    iv = (icd_version or "").upper()
++    mp = (mapping_path or "").lower()
++    if iv == "ICD-11" or "icd11" in mp:
++        return "http://id.who.int/icd11/mms", "ICD-11"
++    if mp.startswith("who_api") and "icd10" in mp:
++        return "http://id.who.int/icd/release/10/2019/en", "ICD-10"
++    return "http://hl7.org/fhir/sid/icd-10-cm", "2024"
++
++
++def _build_fhir_condition(
++    icd_codes: list,
++    session_id: str,
++    *,
++    patient_display: Optional[str] = None,
++    icd_version: Optional[str] = None,
++    mapping_path: Optional[str] = None,
++) -> dict:
+     """
+     Build a minimal FHIR R4 Condition resource.
+     Primary code goes into code.coding, secondary/additional into extension.
++    Uses ICD-11 MMS when org / mapping path is WHO ICD-11 (Saveetha-style).
+     """
+     if not icd_codes:
+         return {}
+ 
++    system, ver = _fhir_icd_system_for_state(icd_version, mapping_path)
+     primary = icd_codes[0]
+     codings = [{
+-        "system":  "http://hl7.org/fhir/sid/icd-10-cm",
+-        "version": "2024",
++        "system":  system,
++        "version": ver,
+         "code":    primary["code"],
+         "display": primary.get("description", ""),
+     }]
+@@ -61,8 +84,8 @@ def _build_fhir_condition(icd_codes: list, session_id: str) -> dict:
+     # Add secondary/additional codes as additional codings
+     for c in icd_codes[1:]:
+         codings.append({
+-            "system":    "http://hl7.org/fhir/sid/icd-10-cm",
+-            "version":   "2024",
++            "system":    system,
++            "version":   ver,
+             "code":      c["code"],
+             "display":   c.get("description", ""),
+             "extension": [{
+@@ -71,6 +94,10 @@ def _build_fhir_condition(icd_codes: list, session_id: str) -> dict:
+             }],
+         })
+ 
++    subject: dict = {"reference": f"Patient/{session_id}"}
++    if patient_display:
++        subject["display"] = patient_display
++
+     return {
+         "resourceType":  "Condition",
+         "id":            session_id,
+@@ -90,9 +117,7 @@ def _build_fhir_condition(icd_codes: list, session_id: str) -> dict:
+             "coding": codings,
+             "text":   primary.get("description", ""),
+         },
+-        "subject": {
+-            "reference": f"Patient/{session_id}",
+-        },
++        "subject": subject,
+         "meta": {
+             "source": "integronix-ai-coding-engine",
+         },
+@@ -117,6 +142,20 @@ async def _run_pipeline(initial_state: CodingState, session_id: str) -> CodeResp
+         )
+ 
+     icd_codes = result.get("icd_codes") or []
++    entities = result.get("structured_entities") or {}
++    patient_block = entities.get("patient") or {}
++    patient_name = None
++    patient_dob = None
++    patient_sex = None
++    if isinstance(patient_block, dict):
++        raw_name = (patient_block.get("full_name") or patient_block.get("name") or "").strip()
++        raw_dob = (patient_block.get("date_of_birth") or "").strip()
++        raw_sex = (patient_block.get("sex") or "").strip()
++        patient_name = raw_name or None
++        patient_dob = raw_dob or None
++        # Keep sex as a short categorical value for policy checks (M/F/other)
++        if raw_sex:
++            patient_sex = raw_sex.upper()
+ 
+     return CodeResponse(
+         session_id=session_id,
+@@ -134,7 +173,16 @@ async def _run_pipeline(initial_state: CodingState, session_id: str) -> CodeResp
+         risk_score=result.get("risk_score", 0.0),
+         risk_label=result.get("risk_label", "UNKNOWN"),
+         extraction_metadata=result.get("extraction_metadata") or {},
+-        fhir_condition=_build_fhir_condition(icd_codes, session_id),
++        fhir_condition=_build_fhir_condition(
++            icd_codes,
++            session_id,
++            patient_display=patient_name,
++            icd_version=result.get("icd_version"),
++            mapping_path=result.get("mapping_path"),
++        ),
++        patient_name=patient_name,
++        patient_dob=patient_dob,
++        patient_sex=patient_sex,
+         error_at=result.get("error_at"),
+         financial_summary=result.get("financial_summary"),
+         decision_trace=result.get("decision_trace"),
+diff --git a/backend/services/extraction_service.py b/backend/services/extraction_service.py
+index 441eee4..169d145 100644
+--- a/backend/services/extraction_service.py
++++ b/backend/services/extraction_service.py
+@@ -52,6 +52,12 @@ EXTRACTION_USER_PROMPT = """Extract clinical entities from this medical document
+ 
+ Return this exact JSON structure:
+ {{
++  "patient": {{
++    "full_name": "full patient name if explicitly documented (e.g. header, demographics), else null",
++    "date_of_birth": "YYYY-MM-DD if documented, else null",
++    "age_years": null,
++    "sex": "M | F | other | null"
++  }},
+   "diagnoses": [
+     {{
+       "text": "full clinical description of the diagnosis",
+diff --git a/docs/architecture_and_backend/diagrams.md b/docs/architecture_and_backend/diagrams.md
+index 6fde54b..b28b10e 100644
+--- a/docs/architecture_and_backend/diagrams.md
++++ b/docs/architecture_and_backend/diagrams.md
+@@ -15,7 +15,7 @@ graph TD
+         D[Medical Coder / Auditor] -->|3. Uploads clinical document (PDF/Text)| E(API Endpoint: /code/run-pdf)
+         E --> F{Coding & Auditing Pipeline}
+         
+-        F -->|4. Processes Document| G(Document Processing Node)
++        F -->|4. Processes Document| G(Document Processing Node)![1773975354429](image/diagrams/1773975354429.png)![1773975358131](image/diagrams/1773975358131.png)![1773975364568](image/diagrams/1773975364568.png)![1773975371458](image/diagrams/1773975371458.png)![1773975389741](image/diagrams/1773975389741.png)![1773975405688](image/diagrams/1773975405688.png)![1773975408865](image/diagrams/1773975408865.png)![1773976138796](image/diagrams/1773976138796.png)![1773976139197](image/diagrams/1773976139197.png)![1773976160585](image/diagrams/1773976160585.png)![1773976161124](image/diagrams/1773976161124.png)![1773976161637](image/diagrams/1773976161637.png)![1773976161317](image/diagrams/1773976161317.png)![1773976161805](image/diagrams/1773976161805.png)![1773976162257](image/diagrams/1773976162257.png)![1773976162101](image/diagrams/1773976162101.png)![1773976161948](image/diagrams/1773976161948.png)
+         G -->|5. Extracts Clinical Entities| H(Clinical Extraction Node - LLM)
+         H -->|6. Resolves CPT Codes| I(CPT Resolver Node)
+         I -->|7. Resolves SNOMED-CT Concepts| J(SNOMED Resolver Node)
+diff --git a/frontend/src/app/payer/adjudicate/[id]/page.tsx b/frontend/src/app/payer/adjudicate/[id]/page.tsx
+index 7dfc1cf..9951f28 100644
+--- a/frontend/src/app/payer/adjudicate/[id]/page.tsx
++++ b/frontend/src/app/payer/adjudicate/[id]/page.tsx
+@@ -3,7 +3,7 @@
+ import { useEffect, useState } from 'react';
+ import { useRouter } from 'next/navigation';
+ import { fetchClaimDetail, adjudicateClaim, Claim, formatCurrency } from '@/lib/api';
+-import { ShieldCheck, Cross, FileSignature, ArrowLeft, Activity, Info, AlertOctagon, CheckCircle2, Clock } from 'lucide-react';
++import { ShieldCheck, Cross, FileSignature, ArrowLeft, Activity, Info, AlertOctagon, CheckCircle2, Clock, FileCode2, ChevronDown, ChevronUp } from 'lucide-react';
+ import Link from 'next/link';
+ 
+ export default function AdjudicateClaimPage({ params }: { params: { id: string } }) {
+@@ -13,6 +13,7 @@ export default function AdjudicateClaimPage({ params }: { params: { id: string }
+     const [error, setError] = useState('');
+     const [actionLoading, setActionLoading] = useState(false);
+     const [denialReason, setDenialReason] = useState('');
++    const [fhirExpanded, setFhirExpanded] = useState(false);
+     
+     useEffect(() => {
+         loadClaim();
+@@ -72,6 +73,8 @@ export default function AdjudicateClaimPage({ params }: { params: { id: string }
+     const riskScore = claimData.risk_score || 0;
+     const isRisky = riskScore > 65;
+     const orgName = (claim as any).organizations?.name || 'Unknown Provider';
++    const gate = claimData.payer_gate_report as any || null;
++    const fhirProposal = claimData.fhir_claim_proposal as any || null;
+ 
+     return (
+         <div className="p-8 max-w-5xl mx-auto space-y-6">
+@@ -102,6 +105,39 @@ export default function AdjudicateClaimPage({ params }: { params: { id: string }
+                             <Activity className="w-5 h-5 text-emerald-500" />
+                             Clinical Validation (AI Summary)
+                         </h2>
++
++                            {gate && (
++                                <div className="bg-[#090d14]/80 p-4 rounded-xl border border-white/5 mb-4">
++                                    <p className="text-xs text-slate-500 uppercase tracking-wider font-semibold mb-2">
++                                        Payer Policy Gate
++                                    </p>
++                                    <div className="flex items-center gap-2 mb-2">
++                                        <span className={`px-3 py-1 rounded-md text-xs font-bold border ${
++                                            gate.gate_status === 'PASS'
++                                                ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
++                                                : 'bg-amber-500/10 text-amber-300 border-amber-500/20'
++                                        }`}>
++                                            {gate.gate_status === 'PASS' ? 'Auto-approve eligible' : 'Needs manual review'}
++                                        </span>
++                                        {gate.should_auto_approve && (
++                                            <span className="text-xs font-bold text-emerald-300">(Auto decision enabled)</span>
++                                        )}
++                                    </div>
++
++                                    {Array.isArray(gate.reasons) && gate.reasons.length > 0 ? (
++                                        <div className="space-y-2">
++                                            {gate.reasons.map((r: any, idx: number) => (
++                                                <div key={`${r.code}-${idx}`} className="text-xs text-slate-300 flex gap-2">
++                                                    <span className="font-mono text-amber-300 shrink-0">{r.code}</span>
++                                                    <span className="text-slate-300">{r.message}</span>
++                                                </div>
++                                            ))}
++                                        </div>
++                                    ) : (
++                                        <div className="text-xs text-slate-400">No issues detected by payer policy.</div>
++                                    )}
++                                </div>
++                            )}
+                         
+                         <div className="space-y-4">
+                             <div className="bg-[#090d14]/80 p-4 rounded-xl border border-white/5">
+@@ -150,6 +186,105 @@ export default function AdjudicateClaimPage({ params }: { params: { id: string }
+                             </div>
+                         </div>
+                     </div>
++
++                    {/* FHIR Claim Proposal */}
++                    {fhirProposal && (
++                        <div className="bg-slate-900/50 rounded-2xl border border-indigo-900/30 p-6">
++                            <h2 className="text-lg font-bold text-white mb-4 flex items-center gap-2">
++                                <FileCode2 className="w-5 h-5 text-indigo-400" />
++                                FHIR Claim Proposal
++                                <span className="ml-auto text-[10px] font-bold uppercase tracking-widest px-2 py-1 rounded bg-indigo-500/10 text-indigo-400 border border-indigo-500/20">
++                                    Hospital Proposed
++                                </span>
++                            </h2>
++
++                            {/* Summary rows */}
++                            <div className="space-y-3 mb-4">
++                                {/* Patient */}
++                                <div className="bg-[#090d14]/80 p-3 rounded-xl border border-white/5">
++                                    <p className="text-[10px] text-slate-500 uppercase tracking-wider font-semibold mb-1.5">Patient</p>
++                                    {(() => {
++                                        const contained = fhirProposal.contained?.[0];
++                                        const nameText = contained?.name?.[0]?.text;
++                                        const dob = contained?.birthDate;
++                                        const gender = contained?.gender;
++                                        return (
++                                            <div className="flex flex-wrap gap-3 text-sm">
++                                                <span className="text-slate-200 font-semibold">{nameText || <span className="text-slate-500 italic">Not documented</span>}</span>
++                                                {dob && <span className="text-slate-400">DOB: {dob}</span>}
++                                                {gender && <span className="text-slate-400 capitalize">{gender}</span>}
++                                            </div>
++                                        );
++                                    })()}
++                                </div>
++
++                                {/* Diagnoses */}
++                                <div className="bg-[#090d14]/80 p-3 rounded-xl border border-white/5">
++                                    <p className="text-[10px] text-slate-500 uppercase tracking-wider font-semibold mb-1.5">
++                                        Diagnoses&nbsp;
++                                        <span className="text-indigo-400 normal-case font-normal">
++                                            ({fhirProposal.extension?.find((e: any) => e.url?.includes('icd-version'))?.valueString || 'ICD'})
++                                        </span>
++                                    </p>
++                                    <div className="space-y-1.5">
++                                        {(fhirProposal.diagnosis || []).map((d: any, idx: number) => (
++                                            <div key={idx} className="flex items-center gap-2 text-sm">
++                                                <span className="font-mono px-2 py-0.5 rounded bg-indigo-500/10 text-indigo-300 border border-indigo-500/20 text-xs">
++                                                    {d.diagnosisCodeableConcept?.coding?.[0]?.code}
++                                                </span>
++                                                <span className="text-slate-300 text-xs truncate">{d.diagnosisCodeableConcept?.coding?.[0]?.display}</span>
++                                                {idx === 0 && <span className="text-[10px] text-slate-500 ml-auto shrink-0">principal</span>}
++                                            </div>
++                                        ))}
++                                    </div>
++                                </div>
++
++                                {/* Procedures */}
++                                {(fhirProposal.item || []).length > 0 && (
++                                    <div className="bg-[#090d14]/80 p-3 rounded-xl border border-white/5">
++                                        <p className="text-[10px] text-slate-500 uppercase tracking-wider font-semibold mb-1.5">Procedures (CPT)</p>
++                                        <div className="space-y-1.5">
++                                            {fhirProposal.item.map((item: any, idx: number) => (
++                                                <div key={idx} className="flex items-center justify-between text-sm">
++                                                    <div className="flex items-center gap-2">
++                                                        <span className="font-mono px-2 py-0.5 rounded bg-slate-700/60 text-slate-300 border border-white/5 text-xs">
++                                                            {item.productOrService?.coding?.[0]?.code}
++                                                        </span>
++                                                        <span className="text-slate-400 text-xs truncate max-w-[200px]">{item.productOrService?.coding?.[0]?.display}</span>
++                                                    </div>
++                                                    <span className="text-amber-300 font-mono text-xs shrink-0">
++                                                        Γé╣{item.net?.value?.toLocaleString('en-IN') ?? 'ΓÇö'}
++                                                    </span>
++                                                </div>
++                                            ))}
++                                        </div>
++                                    </div>
++                                )}
++
++                                {/* Total */}
++                                <div className="flex items-center justify-between text-sm px-1">
++                                    <span className="text-slate-400">Proposed Total (Hospital Billed)</span>
++                                    <span className="font-mono font-bold text-amber-300">
++                                        Γé╣{fhirProposal.total?.value?.toLocaleString('en-IN') ?? 'ΓÇö'}
++                                    </span>
++                                </div>
++                            </div>
++
++                            {/* Collapsible raw JSON viewer */}
++                            <button
++                                onClick={() => setFhirExpanded(v => !v)}
++                                className="flex items-center gap-2 text-xs text-slate-400 hover:text-indigo-300 transition-colors font-semibold"
++                            >
++                                {fhirExpanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
++                                {fhirExpanded ? 'Hide raw FHIR JSON' : 'View raw FHIR Claim JSON'}
++                            </button>
++                            {fhirExpanded && (
++                                <pre className="mt-3 bg-[#060a10] text-[10px] leading-relaxed text-emerald-300/80 font-mono p-4 rounded-xl border border-white/5 overflow-auto max-h-96 whitespace-pre-wrap break-all">
++                                    {JSON.stringify(fhirProposal, null, 2)}
++                                </pre>
++                            )}
++                        </div>
++                    )}
+                 </div>
+ 
+                 {/* Financials & Action Panel */}
+diff --git a/frontend/src/app/payer/inbox/page.tsx b/frontend/src/app/payer/inbox/page.tsx
+index 78b2cfb..1e3052c 100644
+--- a/frontend/src/app/payer/inbox/page.tsx
++++ b/frontend/src/app/payer/inbox/page.tsx
+@@ -1,6 +1,6 @@
+ 'use client';
+ 
+-import { useEffect, useState } from 'react';
++import { useEffect, useRef, useState } from 'react';
+ import { useRouter } from 'next/navigation';
+ import { fetchPayerByOrg, fetchPayerClaims, Claim, formatCurrency } from '@/lib/api';
+ import { Inbox, FileSignature, AlertCircle, RefreshCw, Building2, Search } from 'lucide-react';
+@@ -12,11 +12,41 @@ export default function PayerInboxPage() {
+     const [claims, setClaims] = useState<Claim[]>([]);
+     const [loading, setLoading] = useState(true);
+     const [error, setError] = useState('');
+-    const [filterStatus, setFilterStatus] = useState<string>('SUBMITTED');
++    // Auto-approved claims may land as PARTIALLY_PAID, so default to ALL for demo UX.
++    const [filterStatus, setFilterStatus] = useState<string>('ALL');
++
++    // Avoid slow repeated fetch when navigating back from adjudication.
++    const inFlightRef = useRef(false);
++    const cacheTTLms = 15000;
+ 
+     useEffect(() => {
+-        if (orgUser?.organization_id) loadInbox();
+-    }, [orgUser]);
++        const orgId = orgUser?.organization_id;
++        if (!orgId) return;
++
++        const cacheKey = `payerInbox:${orgId}`;
++        try {
++            const raw = sessionStorage.getItem(cacheKey);
++            if (raw) {
++                const parsed = JSON.parse(raw) as { ts: number; data: Claim[] };
++                if (parsed?.data && typeof parsed.ts === 'number' && Date.now() - parsed.ts < cacheTTLms) {
++                    setClaims(parsed.data);
++                    setLoading(false);
++                    return;
++                }
++            }
++        } catch {
++            // ignore cache read failures
++        }
++
++        if (inFlightRef.current) return;
++        inFlightRef.current = true;
++        loadInbox()
++            .catch(() => { /* handled in loadInbox */ })
++            .finally(() => {
++                inFlightRef.current = false;
++            });
++        // eslint-disable-next-line react-hooks/exhaustive-deps
++    }, [orgUser?.organization_id]);
+ 
+     const loadInbox = async () => {
+         setLoading(true);
+@@ -31,6 +61,17 @@ export default function PayerInboxPage() {
+             }
+             const data = await fetchPayerClaims(payer.id);
+             setClaims(data);
++
++            // Store short cache to speed up back-navigation.
++            try {
++                const orgId = orgUser!.organization_id;
++                sessionStorage.setItem(
++                    `payerInbox:${orgId}`,
++                    JSON.stringify({ ts: Date.now(), data })
++                );
++            } catch {
++                // ignore cache write failures
++            }
+         } catch (err) {
+             console.error(err);
+             setError('Failed to load payer global inbox. Is the backend running?');
+@@ -80,7 +121,7 @@ export default function PayerInboxPage() {
+                     />
+                 </div>
+                 <div className="flex bg-slate-900/50 rounded-lg p-1 border border-emerald-900/40">
+-                    {['ALL', 'SUBMITTED', 'PAID', 'DENIED'].map(s => (
++                    {['ALL', 'SUBMITTED', 'PAID', 'PARTIALLY_PAID', 'DENIED'].map(s => (
+                         <button
+                             key={s} onClick={() => setFilterStatus(s)}
+                             className={`px-4 py-1.5 text-xs font-bold rounded-md transition-colors ${filterStatus === s ? 'bg-emerald-500 text-white shadow-md' : 'text-slate-500 hover:text-slate-300'}`}
+diff --git a/frontend/src/app/payer/layout.tsx b/frontend/src/app/payer/layout.tsx
+index 5ba6c7b..7428f73 100644
+--- a/frontend/src/app/payer/layout.tsx
++++ b/frontend/src/app/payer/layout.tsx
+@@ -9,7 +9,6 @@ import { useAuth } from '@/components/AuthProvider';
+ // Payer specific nav items ΓÇö allowedRoles controls visibility per role
+ const navItems = [
+     { href: '/payer/inbox',        icon: Inbox,       name: 'Claim Queue',   allowedRoles: ['payer', 'admin'] },
+-    { href: '/payer/adjudicate',   icon: CheckSquare, name: 'Adjudications', allowedRoles: ['payer', 'admin'] },
+     { href: '/payer/admin',        icon: Users,       name: 'Staff',         allowedRoles: ['admin'] },
+ ];
+ 
+diff --git a/frontend/src/components/IcdCodeCard.tsx b/frontend/src/components/IcdCodeCard.tsx
+index 4f7dbc2..a5427b2 100644
+--- a/frontend/src/components/IcdCodeCard.tsx
++++ b/frontend/src/components/IcdCodeCard.tsx
+@@ -14,6 +14,10 @@ const RESOLUTION_COLORS: Record<MappingPath, string> = {
+     no_snomed: 'text-orange-400 bg-orange-500/10 border-orange-500/25',
+     embedding_failed: 'text-danger bg-danger/10 border-danger/25',
+     unknown: 'text-slate-500 bg-white/[0.03] border-white/[0.06]',
++    who_api_icd11: 'text-cyan-400 bg-cyan-500/10 border-cyan-500/25',
++    who_api_icd10: 'text-cyan-400 bg-cyan-500/10 border-cyan-500/25',
++    provider_fallback: 'text-warning bg-warning/10 border-warning/25',
++    provider_augmented: 'text-amber-400 bg-amber-500/10 border-amber-500/25',
+ };
+ 
+ const RESOLUTION_LABELS: Record<MappingPath, string> = {
+@@ -23,6 +27,10 @@ const RESOLUTION_LABELS: Record<MappingPath, string> = {
+     no_snomed: 'ΓÜá Ontology Gap',
+     embedding_failed: 'Γ£ò Pipeline Error',
+     unknown: 'ΓÇö Unresolved',
++    who_api_icd11: '≡ƒîÉ WHO ICD-11',
++    who_api_icd10: '≡ƒîÉ WHO ICD-10',
++    provider_fallback: '≡ƒôç Provider Index',
++    provider_augmented: '≡ƒôç Provider + Engine',
+ };
+ 
+ export default function IcdCodeCard({ result }: Props) {
+diff --git a/frontend/src/components/ResultsPanel.tsx b/frontend/src/components/ResultsPanel.tsx
+index 54e95ec..7fb63db 100644
+--- a/frontend/src/components/ResultsPanel.tsx
++++ b/frontend/src/components/ResultsPanel.tsx
+@@ -27,6 +27,10 @@ const RESOLUTION_LABELS: Record<MappingPath, { label: string; color: string }> =
+     no_snomed: { label: 'Ontology Gap', color: 'text-orange-400' },
+     embedding_failed: { label: 'Pipeline Error', color: 'text-danger' },
+     unknown: { label: 'Unresolved', color: 'text-slate-500' },
++    who_api_icd11: { label: 'WHO ICD-11', color: 'text-cyan-400' },
++    who_api_icd10: { label: 'WHO ICD-10', color: 'text-cyan-400' },
++    provider_fallback: { label: 'Provider Index', color: 'text-warning' },
++    provider_augmented: { label: 'Provider Augmented', color: 'text-warning' },
+ };
+ 
+ export default function ResultsPanel({ result, onReanalyze, orgId }: Props) {
+@@ -39,11 +43,14 @@ export default function ResultsPanel({ result, onReanalyze, orgId }: Props) {
+     const [submitSuccess, setSubmitSuccess] = useState(false);
+ 
+     useEffect(() => {
+-        fetchPayers().then(data => {
+-            setPayers(data);
+-            if (data.length > 0) setSelectedPayer(data[0].id);
+-        }).catch(err => console.error("Failed to load payers", err));
+-    }, []);
++        // Demo UX: show all payers so the coder can pick the intended contract.
++        fetchPayers()
++            .then(data => {
++                setPayers(data);
++                if (data.length > 0) setSelectedPayer(data[0].id);
++            })
++            .catch(err => console.error("Failed to load payers", err));
++    }, [orgId]);
+ 
+     const handleSubmitClaim = async () => {
+         if (!selectedPayer) return;
+@@ -62,8 +69,14 @@ export default function ResultsPanel({ result, onReanalyze, orgId }: Props) {
+                 session_id: result.session_id,
+                 organization_id: orgId,
+                 payer_id: selectedPayer,
+-                patient_name: ((result.fhir_condition?.subject as any)?.display) ?? 'John Doe', // Simulated patient for the demo
+-                patient_dob: '1980-01-01', // Simulated
++                // Do not invent demographic data. Leave as null when missing so
++                // payer policy gate can correctly apply DOB/sex requirements.
++                patient_name:
++                    result.patient_name?.trim()
++                    || (result.fhir_condition?.subject as { display?: string } | undefined)?.display
++                    || null,
++                patient_dob: result.patient_dob?.trim() || null,
++                patient_sex: result.patient_sex?.trim() || null,
+                 total_billed_amount: billedAmount,
+                 claim_data: result as any
+             });
+diff --git a/frontend/src/lib/api.ts b/frontend/src/lib/api.ts
+index 44fc89f..b7eab23 100644
+--- a/frontend/src/lib/api.ts
++++ b/frontend/src/lib/api.ts
+@@ -59,9 +59,10 @@ export async function runPdfPipeline(
+ }
+ 
+ export function formatCurrency(delta: number): string {
++    // UI expects INR everywhere (RCM demo). Keep it consistent across pages.
+     const abs = Math.abs(delta);
+     const sign = delta >= 0 ? '+' : '-';
+-    return `${sign}$${abs.toLocaleString('en-US', { minimumFractionDigits: 0 })}`;
++    return `${sign}Γé╣${abs.toLocaleString('en-IN', { maximumFractionDigits: 0 })}`;
+ }
+ 
+ export function formatConfidence(score: number): string {
+diff --git a/frontend/src/types/coding.ts b/frontend/src/types/coding.ts
+index a122a4a..f5c2bef 100644
+--- a/frontend/src/types/coding.ts
++++ b/frontend/src/types/coding.ts
+@@ -73,7 +73,7 @@ export interface FhirCondition {
+         coding: FhirCoding[];
+         text: string;
+     };
+-    subject: { reference: string };
++    subject: { reference: string; display?: string };
+     meta: { source: string };
+ }
+ 
+@@ -87,13 +87,27 @@ export interface ExtractionMetadata {
+ 
+ export type DrgFlag = 'MCC_MISSED' | 'CC_MISSED' | 'MCC_OVERCODED' | null;
+ export type RiskLabel = 'LOW' | 'MEDIUM' | 'HIGH' | 'UNKNOWN';
+-export type MappingPath = 'direct' | 'embedding' | 'no_mapping' | 'embedding_failed' | 'no_snomed' | 'unknown';
++export type MappingPath =
++    | 'direct'
++    | 'embedding'
++    | 'no_mapping'
++    | 'embedding_failed'
++    | 'no_snomed'
++    | 'unknown'
++    | 'who_api_icd11'
++    | 'who_api_icd10'
++    | 'provider_fallback'
++    | 'provider_augmented';
+ 
+ export interface CodeResponse {
+     session_id: string;
+     final_icd_code: string;
+     confidence_score: number;
+     mapping_path: MappingPath;
++    /** From clinical_extract when documented in the note */
++    patient_name?: string | null;
++    patient_dob?: string | null;
++    patient_sex?: string | null;
+     resolved_snomed_code: string | null;
+     candidates: IcdCandidate[];
+     icd_codes: IcdCode[];

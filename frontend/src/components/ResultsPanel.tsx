@@ -27,6 +27,10 @@ const RESOLUTION_LABELS: Record<MappingPath, { label: string; color: string }> =
     no_snomed: { label: 'Ontology Gap', color: 'text-orange-400' },
     embedding_failed: { label: 'Pipeline Error', color: 'text-danger' },
     unknown: { label: 'Unresolved', color: 'text-slate-500' },
+    who_api_icd11: { label: 'WHO ICD-11', color: 'text-cyan-400' },
+    who_api_icd10: { label: 'WHO ICD-10', color: 'text-cyan-400' },
+    provider_fallback: { label: 'Provider Index', color: 'text-warning' },
+    provider_augmented: { label: 'Provider Augmented', color: 'text-warning' },
 };
 
 export default function ResultsPanel({ result, onReanalyze, orgId }: Props) {
@@ -39,11 +43,14 @@ export default function ResultsPanel({ result, onReanalyze, orgId }: Props) {
     const [submitSuccess, setSubmitSuccess] = useState(false);
 
     useEffect(() => {
-        fetchPayers().then(data => {
-            setPayers(data);
-            if (data.length > 0) setSelectedPayer(data[0].id);
-        }).catch(err => console.error("Failed to load payers", err));
-    }, []);
+        // Demo UX: show all payers so the coder can pick the intended contract.
+        fetchPayers()
+            .then(data => {
+                setPayers(data);
+                if (data.length > 0) setSelectedPayer(data[0].id);
+            })
+            .catch(err => console.error("Failed to load payers", err));
+    }, [orgId]);
 
     const handleSubmitClaim = async () => {
         if (!selectedPayer) return;
@@ -62,8 +69,14 @@ export default function ResultsPanel({ result, onReanalyze, orgId }: Props) {
                 session_id: result.session_id,
                 organization_id: orgId,
                 payer_id: selectedPayer,
-                patient_name: ((result.fhir_condition?.subject as any)?.display) ?? 'John Doe', // Simulated patient for the demo
-                patient_dob: '1980-01-01', // Simulated
+                // Do not invent demographic data. Leave as null when missing so
+                // payer policy gate can correctly apply DOB/sex requirements.
+                patient_name:
+                    result.patient_name?.trim()
+                    || (result.fhir_condition?.subject as { display?: string } | undefined)?.display
+                    || null,
+                patient_dob: result.patient_dob?.trim() || null,
+                patient_sex: result.patient_sex?.trim() || null,
                 total_billed_amount: billedAmount,
                 claim_data: result as any
             });

@@ -42,18 +42,41 @@ def _get_graph():
 
 # ── FHIR builder ───────────────────────────────────────────────────────────────
 
-def _build_fhir_condition(icd_codes: list, session_id: str) -> dict:
+def _fhir_icd_system_for_state(
+    icd_version: Optional[str],
+    mapping_path: Optional[str],
+) -> tuple[str, str]:
+    """Return (coding.system, coding.version) for Condition.code."""
+    iv = (icd_version or "").upper()
+    mp = (mapping_path or "").lower()
+    if iv == "ICD-11" or "icd11" in mp:
+        return "http://id.who.int/icd11/mms", "ICD-11"
+    if mp.startswith("who_api") and "icd10" in mp:
+        return "http://id.who.int/icd/release/10/2019/en", "ICD-10"
+    return "http://hl7.org/fhir/sid/icd-10-cm", "2024"
+
+
+def _build_fhir_condition(
+    icd_codes: list,
+    session_id: str,
+    *,
+    patient_display: Optional[str] = None,
+    icd_version: Optional[str] = None,
+    mapping_path: Optional[str] = None,
+) -> dict:
     """
     Build a minimal FHIR R4 Condition resource.
     Primary code goes into code.coding, secondary/additional into extension.
+    Uses ICD-11 MMS when org / mapping path is WHO ICD-11 (Saveetha-style).
     """
     if not icd_codes:
         return {}
 
+    system, ver = _fhir_icd_system_for_state(icd_version, mapping_path)
     primary = icd_codes[0]
     codings = [{
-        "system":  "http://hl7.org/fhir/sid/icd-10-cm",
-        "version": "2024",
+        "system":  system,
+        "version": ver,
         "code":    primary["code"],
         "display": primary.get("description", ""),
     }]
@@ -61,8 +84,8 @@ def _build_fhir_condition(icd_codes: list, session_id: str) -> dict:
     # Add secondary/additional codes as additional codings
     for c in icd_codes[1:]:
         codings.append({
-            "system":    "http://hl7.org/fhir/sid/icd-10-cm",
-            "version":   "2024",
+            "system":    system,
+            "version":   ver,
             "code":      c["code"],
             "display":   c.get("description", ""),
             "extension": [{
@@ -70,6 +93,10 @@ def _build_fhir_condition(icd_codes: list, session_id: str) -> dict:
                 "valueString": c.get("role", "secondary"),
             }],
         })
+
+    subject: dict = {"reference": f"Patient/{session_id}"}
+    if patient_display:
+        subject["display"] = patient_display
 
     return {
         "resourceType":  "Condition",
@@ -90,9 +117,7 @@ def _build_fhir_condition(icd_codes: list, session_id: str) -> dict:
             "coding": codings,
             "text":   primary.get("description", ""),
         },
-        "subject": {
-            "reference": f"Patient/{session_id}",
-        },
+        "subject": subject,
         "meta": {
             "source": "integronix-ai-coding-engine",
         },
@@ -117,6 +142,20 @@ async def _run_pipeline(initial_state: CodingState, session_id: str) -> CodeResp
         )
 
     icd_codes = result.get("icd_codes") or []
+    entities = result.get("structured_entities") or {}
+    patient_block = entities.get("patient") or {}
+    patient_name = None
+    patient_dob = None
+    patient_sex = None
+    if isinstance(patient_block, dict):
+        raw_name = (patient_block.get("full_name") or patient_block.get("name") or "").strip()
+        raw_dob = (patient_block.get("date_of_birth") or "").strip()
+        raw_sex = (patient_block.get("sex") or "").strip()
+        patient_name = raw_name or None
+        patient_dob = raw_dob or None
+        # Keep sex as a short categorical value for policy checks (M/F/other)
+        if raw_sex:
+            patient_sex = raw_sex.upper()
 
     return CodeResponse(
         session_id=session_id,
@@ -134,7 +173,16 @@ async def _run_pipeline(initial_state: CodingState, session_id: str) -> CodeResp
         risk_score=result.get("risk_score", 0.0),
         risk_label=result.get("risk_label", "UNKNOWN"),
         extraction_metadata=result.get("extraction_metadata") or {},
-        fhir_condition=_build_fhir_condition(icd_codes, session_id),
+        fhir_condition=_build_fhir_condition(
+            icd_codes,
+            session_id,
+            patient_display=patient_name,
+            icd_version=result.get("icd_version"),
+            mapping_path=result.get("mapping_path"),
+        ),
+        patient_name=patient_name,
+        patient_dob=patient_dob,
+        patient_sex=patient_sex,
         error_at=result.get("error_at"),
         financial_summary=result.get("financial_summary"),
         decision_trace=result.get("decision_trace"),

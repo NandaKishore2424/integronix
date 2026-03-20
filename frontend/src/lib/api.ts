@@ -59,9 +59,10 @@ export async function runPdfPipeline(
 }
 
 export function formatCurrency(delta: number): string {
+    // UI expects INR everywhere (RCM demo). Keep it consistent across pages.
     const abs = Math.abs(delta);
     const sign = delta >= 0 ? '+' : '-';
-    return `${sign}$${abs.toLocaleString('en-US', { minimumFractionDigits: 0 })}`;
+    return `${sign}₹${abs.toLocaleString('en-IN', { maximumFractionDigits: 0 })}`;
 }
 
 export function formatConfidence(score: number): string {

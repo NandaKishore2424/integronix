@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { fetchPayerByOrg, fetchPayerClaims, Claim, formatCurrency } from '@/lib/api';
 import { Inbox, FileSignature, AlertCircle, RefreshCw, Building2, Search } from 'lucide-react';
@@ -12,11 +12,41 @@ export default function PayerInboxPage() {
     const [claims, setClaims] = useState<Claim[]>([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState('');
-    const [filterStatus, setFilterStatus] = useState<string>('SUBMITTED');
+    // Auto-approved claims may land as PARTIALLY_PAID, so default to ALL for demo UX.
+    const [filterStatus, setFilterStatus] = useState<string>('ALL');
+
+    // Avoid slow repeated fetch when navigating back from adjudication.
+    const inFlightRef = useRef(false);
+    const cacheTTLms = 15000;
 
     useEffect(() => {
-        if (orgUser?.organization_id) loadInbox();
-    }, [orgUser]);
+        const orgId = orgUser?.organization_id;
+        if (!orgId) return;
+
+        const cacheKey = `payerInbox:${orgId}`;
+        try {
+            const raw = sessionStorage.getItem(cacheKey);
+            if (raw) {
+                const parsed = JSON.parse(raw) as { ts: number; data: Claim[] };
+                if (parsed?.data && typeof parsed.ts === 'number' && Date.now() - parsed.ts < cacheTTLms) {
+                    setClaims(parsed.data);
+                    setLoading(false);
+                    return;
+                }
+            }
+        } catch {
+            // ignore cache read failures
+        }
+
+        if (inFlightRef.current) return;
+        inFlightRef.current = true;
+        loadInbox()
+            .catch(() => { /* handled in loadInbox */ })
+            .finally(() => {
+                inFlightRef.current = false;
+            });
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [orgUser?.organization_id]);
 
     const loadInbox = async () => {
         setLoading(true);
@@ -31,6 +61,17 @@ export default function PayerInboxPage() {
             }
             const data = await fetchPayerClaims(payer.id);
             setClaims(data);
+
+            // Store short cache to speed up back-navigation.
+            try {
+                const orgId = orgUser!.organization_id;
+                sessionStorage.setItem(
+                    `payerInbox:${orgId}`,
+                    JSON.stringify({ ts: Date.now(), data })
+                );
+            } catch {
+                // ignore cache write failures
+            }
         } catch (err) {
             console.error(err);
             setError('Failed to load payer global inbox. Is the backend running?');
@@ -80,7 +121,7 @@ export default function PayerInboxPage() {
                     />
                 </div>
                 <div className="flex bg-slate-900/50 rounded-lg p-1 border border-emerald-900/40">
-                    {['ALL', 'SUBMITTED', 'PAID', 'DENIED'].map(s => (
+                    {['ALL', 'SUBMITTED', 'PAID', 'PARTIALLY_PAID', 'DENIED'].map(s => (
                         <button
                             key={s} onClick={() => setFilterStatus(s)}
                             className={`px-4 py-1.5 text-xs font-bold rounded-md transition-colors ${filterStatus === s ? 'bg-emerald-500 text-white shadow-md' : 'text-slate-500 hover:text-slate-300'}`}

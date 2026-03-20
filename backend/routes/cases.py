@@ -221,6 +221,19 @@ async def get_case_detail(session_id: str):
     if not result:
         raise HTTPException(status_code=404, detail=f"Results for case '{session_id}' not found.")
 
+    entities = case.get("structured_entities") or {}
+    patient_block = entities.get("patient") or {}
+    patient_name = None
+    patient_dob = None
+    patient_sex = None
+    if isinstance(patient_block, dict):
+        patient_name = (
+            (patient_block.get("full_name") or patient_block.get("name") or "").strip() or None
+        )
+        patient_dob = (patient_block.get("date_of_birth") or "").strip() or None
+        raw_sex = (patient_block.get("sex") or "").strip()
+        patient_sex = raw_sex.upper() if raw_sex else None
+
     # Build a CodeResponse-compatible dict so frontend can reuse ResultsPanel
     return {
         "session_id":          session_id,
@@ -230,6 +243,9 @@ async def get_case_detail(session_id: str):
         "resolved_snomed_code": result.get("resolved_snomed_code"),
         "candidates":          result.get("candidate_codes", []),
         "icd_codes":           result.get("icd_codes_full", []),
+        # Preserve CPT + financial breakdown when the coder re-opens a case.
+        # These are required for the payer policy gate and the FHIR Claim proposal items.
+        "cpt_codes":           result.get("cpt_codes", []) or [],
         "discrepancy_type":    result.get("discrepancy_type"),
         "discrepancy":         result.get("audit_result_json"),
         "financial_delta":     result.get("financial_delta"),
@@ -238,6 +254,11 @@ async def get_case_detail(session_id: str):
         "risk_label":          result.get("risk_label", "UNKNOWN"),
         "extraction_metadata": {},
         "fhir_condition":      result.get("fhir_condition"),
+        "patient_name":        patient_name,
+        "patient_dob":         patient_dob,
+        "patient_sex":        patient_sex,
+        "financial_summary":   result.get("financial_summary"),
+        "decision_trace":      None,
         "error_at":            None,
         "document_source":     case.get("document_source", "text_input"),
         "ocr_used":            case.get("ocr_used", False),

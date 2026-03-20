@@ -51,28 +51,49 @@ async def cpt_resolver_node(state: CodingState) -> CodingState:
             # 1. Generate the semantic vector for the doctor's text
             embedding_vector = _embedding_model.encode(procedure_text).tolist()
             
-            # 2. Query our custom Supabase RPC for a semantic search
-            response = supabase.rpc(
+            # 2. Query our custom Supabase RPC for a semantic search.
+            # First pass is strict; if we get no match, do a second pass with a
+            # lower threshold so common discharge-procedure phrases still map.
+            first_pass_response = supabase.rpc(
                 "match_cpt_codes",
                 {
                     "query_embedding": embedding_vector,
-                    "match_threshold": 0.55, # Minimum confidence threshold
-                    "match_count": 1         # Get the single best matched standard code
-                }
+                    "match_threshold": 0.55,
+                    "match_count": 1,
+                },
             ).execute()
-            
-            matches = response.data
-            if matches and len(matches) > 0:
+
+            matches = first_pass_response.data or []
+            if not matches:
+                second_pass_response = supabase.rpc(
+                    "match_cpt_codes",
+                    {
+                        "query_embedding": embedding_vector,
+                        "match_threshold": 0.42,
+                        "match_count": 3,
+                    },
+                ).execute()
+                matches = second_pass_response.data or []
+
+            if matches:
                 best_match = matches[0]
-                all_cpt_matches.append({
-                    "original_text": procedure_text,
-                    "code": best_match["code"],
-                    "description": best_match["description"],
-                    "type": best_match["code_type"],
-                    "base_price": float(best_match["base_price"]),
-                    "confidence": float(best_match["similarity"])
-                })
-                log.info("cpt_matched", session_id=session_id, original=procedure_text, code=best_match["code"], confidence=best_match["similarity"])
+                all_cpt_matches.append(
+                    {
+                        "original_text": procedure_text,
+                        "code": best_match.get("code"),
+                        "description": best_match.get("description"),
+                        "type": best_match.get("code_type"),
+                        "base_price": float(best_match.get("base_price") or 0.0),
+                        "confidence": float(best_match.get("similarity") or 0.0),
+                    }
+                )
+                log.info(
+                    "cpt_matched",
+                    session_id=session_id,
+                    original=procedure_text,
+                    code=best_match.get("code"),
+                    confidence=best_match.get("similarity"),
+                )
             else:
                 log.warning("cpt_no_match", session_id=session_id, original=procedure_text)
                 
