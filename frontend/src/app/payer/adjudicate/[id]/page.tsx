@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { fetchClaimDetail, adjudicateClaim, Claim, formatCurrency } from '@/lib/api';
-import { ShieldCheck, Cross, FileSignature, ArrowLeft, Activity, Info, AlertOctagon, CheckCircle2, Clock } from 'lucide-react';
+import { ShieldCheck, Cross, FileSignature, ArrowLeft, Activity, Info, AlertOctagon, CheckCircle2, Clock, FileCode2, ChevronDown, ChevronUp } from 'lucide-react';
 import Link from 'next/link';
 
 export default function AdjudicateClaimPage({ params }: { params: { id: string } }) {
@@ -13,6 +13,7 @@ export default function AdjudicateClaimPage({ params }: { params: { id: string }
     const [error, setError] = useState('');
     const [actionLoading, setActionLoading] = useState(false);
     const [denialReason, setDenialReason] = useState('');
+    const [fhirExpanded, setFhirExpanded] = useState(false);
     
     useEffect(() => {
         loadClaim();
@@ -72,6 +73,8 @@ export default function AdjudicateClaimPage({ params }: { params: { id: string }
     const riskScore = claimData.risk_score || 0;
     const isRisky = riskScore > 65;
     const orgName = (claim as any).organizations?.name || 'Unknown Provider';
+    const gate = claimData.payer_gate_report as any || null;
+    const fhirProposal = claimData.fhir_claim_proposal as any || null;
 
     return (
         <div className="p-8 max-w-5xl mx-auto space-y-6">
@@ -102,6 +105,39 @@ export default function AdjudicateClaimPage({ params }: { params: { id: string }
                             <Activity className="w-5 h-5 text-emerald-500" />
                             Clinical Validation (AI Summary)
                         </h2>
+
+                            {gate && (
+                                <div className="bg-[#090d14]/80 p-4 rounded-xl border border-white/5 mb-4">
+                                    <p className="text-xs text-slate-500 uppercase tracking-wider font-semibold mb-2">
+                                        Payer Policy Gate
+                                    </p>
+                                    <div className="flex items-center gap-2 mb-2">
+                                        <span className={`px-3 py-1 rounded-md text-xs font-bold border ${
+                                            gate.gate_status === 'PASS'
+                                                ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
+                                                : 'bg-amber-500/10 text-amber-300 border-amber-500/20'
+                                        }`}>
+                                            {gate.gate_status === 'PASS' ? 'Auto-approve eligible' : 'Needs manual review'}
+                                        </span>
+                                        {gate.should_auto_approve && (
+                                            <span className="text-xs font-bold text-emerald-300">(Auto decision enabled)</span>
+                                        )}
+                                    </div>
+
+                                    {Array.isArray(gate.reasons) && gate.reasons.length > 0 ? (
+                                        <div className="space-y-2">
+                                            {gate.reasons.map((r: any, idx: number) => (
+                                                <div key={`${r.code}-${idx}`} className="text-xs text-slate-300 flex gap-2">
+                                                    <span className="font-mono text-amber-300 shrink-0">{r.code}</span>
+                                                    <span className="text-slate-300">{r.message}</span>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    ) : (
+                                        <div className="text-xs text-slate-400">No issues detected by payer policy.</div>
+                                    )}
+                                </div>
+                            )}
                         
                         <div className="space-y-4">
                             <div className="bg-[#090d14]/80 p-4 rounded-xl border border-white/5">
@@ -150,6 +186,105 @@ export default function AdjudicateClaimPage({ params }: { params: { id: string }
                             </div>
                         </div>
                     </div>
+
+                    {/* FHIR Claim Proposal */}
+                    {fhirProposal && (
+                        <div className="bg-slate-900/50 rounded-2xl border border-indigo-900/30 p-6">
+                            <h2 className="text-lg font-bold text-white mb-4 flex items-center gap-2">
+                                <FileCode2 className="w-5 h-5 text-indigo-400" />
+                                FHIR Claim Proposal
+                                <span className="ml-auto text-[10px] font-bold uppercase tracking-widest px-2 py-1 rounded bg-indigo-500/10 text-indigo-400 border border-indigo-500/20">
+                                    Hospital Proposed
+                                </span>
+                            </h2>
+
+                            {/* Summary rows */}
+                            <div className="space-y-3 mb-4">
+                                {/* Patient */}
+                                <div className="bg-[#090d14]/80 p-3 rounded-xl border border-white/5">
+                                    <p className="text-[10px] text-slate-500 uppercase tracking-wider font-semibold mb-1.5">Patient</p>
+                                    {(() => {
+                                        const contained = fhirProposal.contained?.[0];
+                                        const nameText = contained?.name?.[0]?.text;
+                                        const dob = contained?.birthDate;
+                                        const gender = contained?.gender;
+                                        return (
+                                            <div className="flex flex-wrap gap-3 text-sm">
+                                                <span className="text-slate-200 font-semibold">{nameText || <span className="text-slate-500 italic">Not documented</span>}</span>
+                                                {dob && <span className="text-slate-400">DOB: {dob}</span>}
+                                                {gender && <span className="text-slate-400 capitalize">{gender}</span>}
+                                            </div>
+                                        );
+                                    })()}
+                                </div>
+
+                                {/* Diagnoses */}
+                                <div className="bg-[#090d14]/80 p-3 rounded-xl border border-white/5">
+                                    <p className="text-[10px] text-slate-500 uppercase tracking-wider font-semibold mb-1.5">
+                                        Diagnoses&nbsp;
+                                        <span className="text-indigo-400 normal-case font-normal">
+                                            ({fhirProposal.extension?.find((e: any) => e.url?.includes('icd-version'))?.valueString || 'ICD'})
+                                        </span>
+                                    </p>
+                                    <div className="space-y-1.5">
+                                        {(fhirProposal.diagnosis || []).map((d: any, idx: number) => (
+                                            <div key={idx} className="flex items-center gap-2 text-sm">
+                                                <span className="font-mono px-2 py-0.5 rounded bg-indigo-500/10 text-indigo-300 border border-indigo-500/20 text-xs">
+                                                    {d.diagnosisCodeableConcept?.coding?.[0]?.code}
+                                                </span>
+                                                <span className="text-slate-300 text-xs truncate">{d.diagnosisCodeableConcept?.coding?.[0]?.display}</span>
+                                                {idx === 0 && <span className="text-[10px] text-slate-500 ml-auto shrink-0">principal</span>}
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+
+                                {/* Procedures */}
+                                {(fhirProposal.item || []).length > 0 && (
+                                    <div className="bg-[#090d14]/80 p-3 rounded-xl border border-white/5">
+                                        <p className="text-[10px] text-slate-500 uppercase tracking-wider font-semibold mb-1.5">Procedures (CPT)</p>
+                                        <div className="space-y-1.5">
+                                            {fhirProposal.item.map((item: any, idx: number) => (
+                                                <div key={idx} className="flex items-center justify-between text-sm">
+                                                    <div className="flex items-center gap-2">
+                                                        <span className="font-mono px-2 py-0.5 rounded bg-slate-700/60 text-slate-300 border border-white/5 text-xs">
+                                                            {item.productOrService?.coding?.[0]?.code}
+                                                        </span>
+                                                        <span className="text-slate-400 text-xs truncate max-w-[200px]">{item.productOrService?.coding?.[0]?.display}</span>
+                                                    </div>
+                                                    <span className="text-amber-300 font-mono text-xs shrink-0">
+                                                        ₹{item.net?.value?.toLocaleString('en-IN') ?? '—'}
+                                                    </span>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                )}
+
+                                {/* Total */}
+                                <div className="flex items-center justify-between text-sm px-1">
+                                    <span className="text-slate-400">Proposed Total (Hospital Billed)</span>
+                                    <span className="font-mono font-bold text-amber-300">
+                                        ₹{fhirProposal.total?.value?.toLocaleString('en-IN') ?? '—'}
+                                    </span>
+                                </div>
+                            </div>
+
+                            {/* Collapsible raw JSON viewer */}
+                            <button
+                                onClick={() => setFhirExpanded(v => !v)}
+                                className="flex items-center gap-2 text-xs text-slate-400 hover:text-indigo-300 transition-colors font-semibold"
+                            >
+                                {fhirExpanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+                                {fhirExpanded ? 'Hide raw FHIR JSON' : 'View raw FHIR Claim JSON'}
+                            </button>
+                            {fhirExpanded && (
+                                <pre className="mt-3 bg-[#060a10] text-[10px] leading-relaxed text-emerald-300/80 font-mono p-4 rounded-xl border border-white/5 overflow-auto max-h-96 whitespace-pre-wrap break-all">
+                                    {JSON.stringify(fhirProposal, null, 2)}
+                                </pre>
+                            )}
+                        </div>
+                    )}
                 </div>
 
                 {/* Financials & Action Panel */}

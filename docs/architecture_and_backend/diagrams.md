@@ -15,7 +15,7 @@ graph TD
         D[Medical Coder / Auditor] -->|3. Uploads clinical document (PDF/Text)| E(API Endpoint: /code/run-pdf)
         E --> F{Coding & Auditing Pipeline}
         
-        F -->|4. Processes Document| G(Document Processing Node)
+        F -->|4. Processes Document| G(Document Processing Node)![1773975354429](image/diagrams/1773975354429.png)![1773975358131](image/diagrams/1773975358131.png)![1773975364568](image/diagrams/1773975364568.png)![1773975371458](image/diagrams/1773975371458.png)![1773975389741](image/diagrams/1773975389741.png)![1773975405688](image/diagrams/1773975405688.png)![1773975408865](image/diagrams/1773975408865.png)![1773976138796](image/diagrams/1773976138796.png)![1773976139197](image/diagrams/1773976139197.png)![1773976160585](image/diagrams/1773976160585.png)![1773976161124](image/diagrams/1773976161124.png)![1773976161637](image/diagrams/1773976161637.png)![1773976161317](image/diagrams/1773976161317.png)![1773976161805](image/diagrams/1773976161805.png)![1773976162257](image/diagrams/1773976162257.png)![1773976162101](image/diagrams/1773976162101.png)![1773976161948](image/diagrams/1773976161948.png)
         G -->|5. Extracts Clinical Entities| H(Clinical Extraction Node - LLM)
         H -->|6. Resolves CPT Codes| I(CPT Resolver Node)
         I -->|7. Resolves SNOMED-CT Concepts| J(SNOMED Resolver Node)

@@ -9,7 +9,6 @@ import { useAuth } from '@/components/AuthProvider';
 // Payer specific nav items — allowedRoles controls visibility per role
 const navItems = [
     { href: '/payer/inbox',        icon: Inbox,       name: 'Claim Queue',   allowedRoles: ['payer', 'admin'] },
-    { href: '/payer/adjudicate',   icon: CheckSquare, name: 'Adjudications', allowedRoles: ['payer', 'admin'] },
     { href: '/payer/admin',        icon: Users,       name: 'Staff',         allowedRoles: ['admin'] },
 ];
 

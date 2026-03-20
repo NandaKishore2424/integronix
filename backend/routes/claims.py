@@ -1,10 +1,13 @@
+import uuid
 from fastapi import APIRouter, HTTPException, Depends, Header
 from pydantic import BaseModel
 from typing import Optional, List, Any
 from supabase import create_client, Client
 from logger import get_logger
 from config import settings
-from services.rules_engine import evaluate_claim
+from services.payer_policy_gate import run_payer_policy_gate
+from services.org_settings_service import get_org_settings
+from services.fhir_claim_builder import build_fhir_claim_proposal
 
 log = get_logger(__name__)
 router = APIRouter(prefix="/claims", tags=["claims"])
@@ -19,8 +22,9 @@ class ClaimSubmissionRequest(BaseModel):
     session_id: str
     organization_id: str
     payer_id: str
-    patient_name: str
-    patient_dob: str
+    patient_name: Optional[str] = None
+    patient_dob: Optional[str] = None
+    patient_sex: Optional[str] = None
     total_billed_amount: float
     claim_data: dict
     submission_notes: Optional[str] = None
@@ -44,9 +48,114 @@ async def submit_claim(req: ClaimSubmissionRequest):
         # Ignore errors if the table doesn't exist yet / not migrated
         pass
 
-    # ── RULE ENGINE AUTO-ADJUDICATION ──
-    is_approved, denial_reason = evaluate_claim(req.claim_data, req.patient_name)
-    initial_status = "SUBMITTED" if is_approved else "DENIED"
+    # ── PAYER POLICY GATE (trustable automation) ──
+    try:
+        payer_policy_resp = getattr(
+            supabase.table("payers")
+            .select(
+                "id, name, payer_type, base_allowed_multiplier, "
+                "auto_approve_enabled, auto_approve_confidence_min, auto_approve_max_risk, "
+                "auto_approve_requires_patient_dob, auto_approve_requires_patient_sex, "
+                "auto_approve_payer_responsibility_pct, accepted_icd_versions"
+            )
+            .eq("id", req.payer_id)
+            .single(),
+            "execute",
+        )()
+        # Supabase client returns a response object with `.data`
+        payer_policy = None
+        if payer_policy_resp and getattr(payer_policy_resp, "data", None):
+            # `.single()` typically returns an object (not a list), but handle both.
+            if isinstance(payer_policy_resp.data, list):
+                payer_policy = payer_policy_resp.data[0] if payer_policy_resp.data else None
+            else:
+                payer_policy = payer_policy_resp.data
+    except Exception:
+        payer_policy = None
+
+    org_settings = await get_org_settings(req.organization_id) if req.organization_id else None
+
+    gate_report = run_payer_policy_gate(
+        claim_data=req.claim_data,
+        payer_policy=payer_policy or {},
+        org_settings=org_settings,
+    )
+
+    # Store the gate report inside the claim payload so the payer can review reasons.
+    if isinstance(req.claim_data, dict):
+        req.claim_data["payer_gate_report"] = gate_report
+
+    # ── FHIR CLAIM PROPOSAL ──────────────────────────────────────────────────
+    # Generate the hospital-proposed FHIR Claim artifact and embed it in the
+    # claim payload.  EDI 837 will be derived from the payer-verified version
+    # later (V1.2).
+    if isinstance(req.claim_data, dict):
+        try:
+            # Resolve organization name (fall back to id if unavailable)
+            _org_name_resp = None
+            _org_name = req.organization_id
+            _payer_name = (payer_policy or {}).get("name") or req.payer_id
+            try:
+                _org_resp = getattr(
+                    supabase.table("organizations").select("name").eq("id", req.organization_id).single(),
+                    "execute",
+                )()
+                if _org_resp and getattr(_org_resp, "data", None):
+                    _org_name = _org_resp.data.get("name") or req.organization_id
+            except Exception:
+                pass
+
+            _claim_tmp_id = str(uuid.uuid4())
+            _cd = req.claim_data
+            fhir_proposal = build_fhir_claim_proposal(
+                claim_id=_claim_tmp_id,
+                session_id=req.session_id,
+                organization_id=req.organization_id,
+                organization_name=_org_name,
+                payer_id=req.payer_id,
+                payer_name=_payer_name,
+                patient_name=req.patient_name,
+                patient_dob=req.patient_dob,
+                patient_sex=req.patient_sex,
+                icd_codes=_cd.get("icd_codes") or [],
+                cpt_codes=_cd.get("cpt_codes") or [],
+                financial_summary=_cd.get("financial_summary") or {},
+                icd_version=_cd.get("icd_version") or (org_settings or {}).get("icd_version"),
+                mapping_path=_cd.get("mapping_path"),
+                total_billed_amount=float(req.total_billed_amount or 0.0),
+            )
+            req.claim_data["fhir_claim_proposal"] = fhir_proposal
+            log.info("fhir_claim_proposal_built", session_id=req.session_id)
+        except Exception as fhir_err:
+            log.error("fhir_claim_proposal_failed", error=str(fhir_err), session_id=req.session_id)
+            # Non-fatal: claim submission continues without FHIR proposal
+
+    # Auto-approve only when explicitly enabled by payer and gate passes.
+    initial_status = "SUBMITTED"
+    total_allowed = None
+    total_paid = None
+    patient_resp = None
+    payer_responsibility_pct = None
+
+    if gate_report.get("should_auto_approve"):
+        payer_responsibility_pct = float(payer_policy.get("auto_approve_payer_responsibility_pct") or 0.80)
+        payer_multiplier = float(payer_policy.get("base_allowed_multiplier") or 1.0)
+
+        financial_summary = req.claim_data.get("financial_summary") or {}
+        line_items = financial_summary.get("line_items") or []
+
+        total_allowed = 0.0
+        for item in line_items:
+            base = float(item.get("base_price") or 0.0)
+            total_allowed += base * payer_multiplier
+
+        total_allowed = round(total_allowed, 2)
+        total_allowed = min(total_allowed, float(req.total_billed_amount or 0.0))
+
+        total_paid = round(total_allowed * payer_responsibility_pct, 2)
+        patient_resp = round(total_allowed - total_paid, 2)
+
+        initial_status = "PAID" if payer_responsibility_pct >= 1.0 else "PARTIALLY_PAID"
 
     # Build the claim payload
     payload = {
@@ -57,9 +166,12 @@ async def submit_claim(req: ClaimSubmissionRequest):
         "patient_dob": req.patient_dob,
         "status": initial_status,
         "total_billed_amount": req.total_billed_amount,
+        "total_allowed_amount": total_allowed,
+        "total_paid_amount": total_paid,
+        "patient_responsibility": patient_resp,
         "claim_data": req.claim_data,
         "submission_notes": req.submission_notes,
-        "denial_reason": None if is_approved else denial_reason,
+        "denial_reason": None,
     }
     
     try:
@@ -76,7 +188,11 @@ async def submit_claim(req: ClaimSubmissionRequest):
                     "claim_id": claim_id,
                     "previous_status": None,
                     "new_status": initial_status,
-                    "action_notes": "Initial Submission." if is_approved else denial_reason 
+                    "action_notes": (
+                        "Auto-approved via payer policy gate."
+                        if gate_report.get("should_auto_approve")
+                        else "Initial submission to payer workflow."
+                    ),
                 }
                 getattr(supabase.table("claim_audit_logs").insert(audit_log), "execute")()
             except Exception as audit_e:
@@ -374,7 +490,8 @@ async def export_edi_837(claim_id: str):
     
     try:
         # Fetch highly detailed claim snapshot
-        res = getattr(supabase.table("claims").select("*, organizations(name, address), payers(name, payer_type)").eq("id", claim_id).single(), "execute")()
+        # organizations.address is not in all deployments — only select existing columns
+        res = getattr(supabase.table("claims").select("*, organizations(name), payers(name, payer_type)").eq("id", claim_id).single(), "execute")()
         if not res or not res.data:
             raise HTTPException(status_code=404, detail="Claim not found")
         

@@ -52,6 +52,12 @@ EXTRACTION_USER_PROMPT = """Extract clinical entities from this medical document
 
 Return this exact JSON structure:
 {{
+  "patient": {{
+    "full_name": "full patient name if explicitly documented (e.g. header, demographics), else null",
+    "date_of_birth": "YYYY-MM-DD if documented, else null",
+    "age_years": null,
+    "sex": "M | F | other | null"
+  }},
   "diagnoses": [
     {{
       "text": "full clinical description of the diagnosis",

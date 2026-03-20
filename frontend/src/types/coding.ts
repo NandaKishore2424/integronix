@@ -73,7 +73,7 @@ export interface FhirCondition {
         coding: FhirCoding[];
         text: string;
     };
-    subject: { reference: string };
+    subject: { reference: string; display?: string };
     meta: { source: string };
 }
 
@@ -87,13 +87,27 @@ export interface ExtractionMetadata {
 
 export type DrgFlag = 'MCC_MISSED' | 'CC_MISSED' | 'MCC_OVERCODED' | null;
 export type RiskLabel = 'LOW' | 'MEDIUM' | 'HIGH' | 'UNKNOWN';
-export type MappingPath = 'direct' | 'embedding' | 'no_mapping' | 'embedding_failed' | 'no_snomed' | 'unknown';
+export type MappingPath =
+    | 'direct'
+    | 'embedding'
+    | 'no_mapping'
+    | 'embedding_failed'
+    | 'no_snomed'
+    | 'unknown'
+    | 'who_api_icd11'
+    | 'who_api_icd10'
+    | 'provider_fallback'
+    | 'provider_augmented';
 
 export interface CodeResponse {
     session_id: string;
     final_icd_code: string;
     confidence_score: number;
     mapping_path: MappingPath;
+    /** From clinical_extract when documented in the note */
+    patient_name?: string | null;
+    patient_dob?: string | null;
+    patient_sex?: string | null;
     resolved_snomed_code: string | null;
     candidates: IcdCandidate[];
     icd_codes: IcdCode[];
