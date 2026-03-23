@@ -24,7 +24,7 @@
 | EDI 837 export | ⚠️ Simulated (segments exist but not derived from FHIR) |
 | Payer edit codes workflow | ❌ Not built |
 | EDI 835 (remittance / denial response) | ❌ Not built |
-| cpt_codes / financial_summary persisted to DB | ❌ Not persisted (breaks coder-history re-submit) |
+| cpt_codes / financial_summary persisted to DB | ✅ Persisted |
 | Tests (regression / golden set) | ❌ None |
 
 ---
@@ -36,6 +36,7 @@
 ### TICKET-01 · Persist cpt_codes + financial_summary in coding_results
 **Priority: HIGH (must-fix before demo)**
 **Assigned to:** Backend engineer
+**Status:** ✅ Completed
 
 #### Problem
 When a coder re-opens a case from Case History, `cpt_codes` and `financial_summary` are `[]` / `null` because they were never stored in the `coding_results` DB row. The payer gate then shows `NO_CPT_CODES` on re-submit.
@@ -69,6 +70,7 @@ ALTER TABLE coding_results
 ### TICKET-02 · Fix FHIR Claim financial amounts (use gross_charge not base_price)
 **Priority: HIGH (data correctness)**
 **Assigned to:** Backend engineer
+**Status:** ✅ Completed
 
 #### Problem
 `build_fhir_claim_proposal()` currently uses `line_items[].base_price` (CMS base price) for FHIR `Claim.item[].unitPrice` and `net`. But `base_price` ignores the hospital's CPT pricing multiplier. If a hospital has `cpt_pricing_multiplier = 1.5`, the FHIR total would be wrong (underreported by 33%).
@@ -96,6 +98,7 @@ base_price = float(
 ### TICKET-03 · Real EDI 837 from payer-verified FHIR Claim
 **Priority: HIGH (Jatayu demo story requires real interoperability)**
 **Assigned to:** Backend engineer (senior)
+**Status:** ✅ Completed
 
 #### Problem
 The current `GET /claims/export/edi/{id}` generates fake EDI segments (NM1, CLM, DTP) but doesn't use the FHIR Claim Proposal data stored in `claim_data.fhir_claim_proposal`. It can't carry ICD-11 codes in the correct EDI loop format and patient demographics are placeholders.
@@ -152,6 +155,7 @@ Wire it in `backend/routes/claims.py` → `GET /claims/export/edi/{id}`:
 ### TICKET-04 · Payer Edit Codes Workflow
 **Priority: MEDIUM-HIGH (core payer trust feature)**
 **Assigned to:** Full-stack engineer
+**Status:** ✅ Completed
 
 #### Problem
 Right now, a payer can only Approve or Deny. In reality, payers routinely **edit codes** before approving (e.g., change the principal ICD from DC11.0&XA8KL9 to a less specific one). Integronix needs to store this for audit and dispute resolution.
@@ -212,6 +216,7 @@ async def payer_edit_claim(claim_id: str, req: PayerEditRequest):
 ### TICKET-05 · EDI 835 Remittance Advice (payer → hospital)
 **Priority: MEDIUM (Jatayu bonus story)**
 **Assigned to:** Backend engineer
+**Status:** ✅ Completed
 
 #### Problem
 After a payer approves/denies a claim, the hospital needs a structured response. EDI 835 (Healthcare Claim Payment/Advice) is the standard. This completes the claim lifecycle loop.
@@ -252,9 +257,10 @@ Add endpoint: `GET /api/v1/claims/export/edi835/{claim_id}` in `backend/routes/c
 
 ---
 
-### TICKET-06 · Demo-grade Regression Test Suite
-**Priority: MEDIUM (required before presenting at Jatayu)**
-**Assigned to:** QA engineer or any backend engineer
+### TICKET-06 · E2E Pipeline Regression Test Suite
+**Priority: HIGH (demo safety)**
+**Assigned to:** Automation / Backend
+**Status:** ✅ Completed
 
 #### Problem
 Every time we change the pipeline (CPT resolver, FHIR builder, payer gate), we risk silently breaking something. The demo requires a consistent end-to-end flow.
@@ -350,10 +356,10 @@ INSERT INTO org_settings (organization_id, icd_version, cpt_pricing_multiplier) 
 
 | Ticket | Feature | Owner | Priority | Files |
 |--------|---------|-------|----------|-------|
-| 01 | Persist cpt_codes + financial_summary in DB | Backend | HIGH | `019_*.sql`, `risk_scoring.py` |
-| 02 | Fix FHIR financial amounts (gross vs base) | Backend | HIGH | `fhir_claim_builder.py` |
-| 03 | Real EDI 837 from FHIR proposal | Backend Senior | HIGH | `edi_837_builder.py`, `claims.py` |
-| 04 | Payer edit codes UI + backend | Full-stack | MEDIUM-HIGH | `020_*.sql`, `claims.py`, adjudicate page, `api.ts` |
+| 01 | ✅ Persist cpt_codes + financial_summary in DB | Backend | HIGH | `019_*.sql`, `risk_scoring.py` |
+| 02 | ✅ Fix FHIR financial amounts (gross vs base) | Backend | HIGH | `fhir_claim_builder.py` |
+| 03 | ✅ Real EDI 837 from FHIR proposal | Backend Senior | HIGH | `edi_837_builder.py`, `claims.py` |
+| 04 | ✅ Payer edit codes UI + backend | Full-stack | MEDIUM-HIGH | `020_*.sql`, `claims.py`, adjudicate page, `api.ts` |
 | 05 | EDI 835 remittance (payer → hospital) | Backend | MEDIUM | `edi_835_builder.py`, `claims.py`, hospital UI |
 | 06 | E2E regression test suite | QA/Backend | MEDIUM | `tests/test_e2e_pipeline.py` |
 | 07 | UI polish (₹, ICD standard label, risk %) | Frontend | MEDIUM | `ResultsPanel.tsx`, adjudicate page |
@@ -365,7 +371,7 @@ INSERT INTO org_settings (organization_id, icd_version, cpt_pricing_multiplier) 
 
 | Jatayu requirement | Where we address it |
 |--------------------|---------------------|
-| AI-driven medical coding | LangGraph pipeline (8 nodes, WHO ICD-11, CPT semantic match) |
+| AI-driven medical coding | LangGraph pipeline (9 nodes, WHO ICD-11, CPT semantic match) |
 | ICD code extraction from PDFs | Node 2 (LLM extraction) + Node 5 (WHO API) |
 | Coding accuracy + confidence | `confidence_score` from ICD decision node, risk score from risk_scoring node |
 | Claim validation before payer submission | Payer Policy Gate (`services/payer_policy_gate.py`) |

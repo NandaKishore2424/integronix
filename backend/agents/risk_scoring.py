@@ -156,6 +156,8 @@ async def risk_scoring_node(state: CodingState) -> CodingState:
             "risk_label":           risk_label,
             "drg_flag":             drg_flag,        # DRG gap signal (Phase 6B)
             "audit_result_json":    discrepancy,
+            "cpt_codes":            state.get("cpt_codes", []),
+            "financial_summary":    state.get("financial_summary"),
         })
     except Exception as e:
         log.warning("coding_results_write_failed", session_id=session_id, error=str(e))

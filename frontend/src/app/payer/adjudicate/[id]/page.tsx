@@ -2,8 +2,8 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { fetchClaimDetail, adjudicateClaim, Claim, formatCurrency } from '@/lib/api';
-import { ShieldCheck, Cross, FileSignature, ArrowLeft, Activity, Info, AlertOctagon, CheckCircle2, Clock, FileCode2, ChevronDown, ChevronUp } from 'lucide-react';
+import { fetchClaimDetail, adjudicateClaim, payerEditClaim, PayerEditPayload, Claim, formatCurrency } from '@/lib/api';
+import { ShieldCheck, Cross, FileSignature, ArrowLeft, Activity, Info, AlertOctagon, CheckCircle2, Clock, FileCode2, ChevronDown, ChevronUp, Pencil, Save, X } from 'lucide-react';
 import Link from 'next/link';
 
 export default function AdjudicateClaimPage({ params }: { params: { id: string } }) {
@@ -14,7 +14,16 @@ export default function AdjudicateClaimPage({ params }: { params: { id: string }
     const [actionLoading, setActionLoading] = useState(false);
     const [denialReason, setDenialReason] = useState('');
     const [fhirExpanded, setFhirExpanded] = useState(false);
-    
+
+    // ── TICKET-04: Edit codes state ───────────────────────────────────────────
+    const [editOpen, setEditOpen] = useState(false);
+    const [editIcdCodes, setEditIcdCodes] = useState<Array<{ code: string; description: string }>>([]);
+    const [editCptCodes, setEditCptCodes] = useState<Array<{ cpt_code: string; description: string }>>([]);
+    const [editReason, setEditReason] = useState('');
+    const [editLoading, setEditLoading] = useState(false);
+    const [editSaved, setEditSaved] = useState(false);
+    const [editError, setEditError] = useState('');
+
     useEffect(() => {
         loadClaim();
     }, [params.id]);
@@ -75,6 +84,42 @@ export default function AdjudicateClaimPage({ params }: { params: { id: string }
     const orgName = (claim as any).organizations?.name || 'Unknown Provider';
     const gate = claimData.payer_gate_report as any || null;
     const fhirProposal = claimData.fhir_claim_proposal as any || null;
+    const alreadyEdited = !!(claim as any).payer_edited;
+
+    // Pre-fill edit state when the user opens the edit panel
+    const openEditPanel = () => {
+        const rawIcd: any[] = claimData.icd_codes || [];
+        const rawCpt: any[] = claimData.cpt_codes || [];
+        setEditIcdCodes(rawIcd.map((c: any) => ({ code: c.code || c.ai_icd_code || '', description: c.description || '' })));
+        setEditCptCodes(rawCpt.map((c: any) => ({ cpt_code: c.cpt_code || c.code || '', description: c.description || '' })));
+        setEditReason('');
+        setEditSaved(false);
+        setEditError('');
+        setEditOpen(true);
+    };
+
+    const handleSaveEdits = async () => {
+        if (!claim) return;
+        if (!editReason.trim()) { setEditError('Please provide a reason for the code changes.'); return; }
+        setEditLoading(true);
+        setEditError('');
+        try {
+            const payload: PayerEditPayload = {
+                edited_icd_codes: editIcdCodes,
+                edited_cpt_codes: editCptCodes,
+                edit_reason: editReason.trim(),
+            };
+            await payerEditClaim(claim.id, payload);
+            setEditSaved(true);
+            setEditOpen(false);
+            await loadClaim(); // Reload to show Payer Edited badge and updated audit log
+        } catch (err: any) {
+            setEditError(err.message || 'Failed to save edits.');
+        } finally {
+            setEditLoading(false);
+        }
+    };
+
 
     return (
         <div className="p-8 max-w-5xl mx-auto space-y-6">
@@ -141,7 +186,9 @@ export default function AdjudicateClaimPage({ params }: { params: { id: string }
                         
                         <div className="space-y-4">
                             <div className="bg-[#090d14]/80 p-4 rounded-xl border border-white/5">
-                                <p className="text-xs text-slate-500 uppercase tracking-wider font-semibold mb-2">Primary ICD-10 Match</p>
+                                <p className="text-xs text-slate-500 uppercase tracking-wider font-semibold mb-2">
+                                    Primary {(claimData.icd_codes?.[0]?.mapping_path ?? '').includes('icd11') ? 'ICD-11' : 'ICD-10'} Diagnosis
+                                </p>
                                 {claimData.icd_codes && claimData.icd_codes.length > 0 ? (
                                     <div className="flex items-center gap-3">
                                         <div className="px-3 py-1 rounded-md bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-mono font-bold">
@@ -166,7 +213,9 @@ export default function AdjudicateClaimPage({ params }: { params: { id: string }
                                                     </div>
                                                     <span className="text-sm text-slate-300">{cpt.description}</span>
                                                 </div>
-                                                <span className="text-sm font-mono text-amber-300 font-semibold">${cpt.cms_base_price} base</span>
+                                                <span className="text-sm font-mono text-amber-300 font-semibold">
+                                                        ₹{((cpt.gross_charge ?? cpt.cms_base_price ?? 0)).toLocaleString('en-IN', { maximumFractionDigits: 2 })} billed
+                                                    </span>
                                             </div>
                                         ))}
                                     </div>
@@ -178,7 +227,9 @@ export default function AdjudicateClaimPage({ params }: { params: { id: string }
                             <div className={`p-4 rounded-xl border flex gap-3 items-start ${isRisky ? 'bg-red-500/10 border-red-500/20' : 'bg-emerald-500/10 border-emerald-500/20'}`}>
                                 {isRisky ? <AlertOctagon className="w-5 h-5 text-red-500 shrink-0 mt-0.5" /> : <ShieldCheck className="w-5 h-5 text-emerald-500 shrink-0 mt-0.5" />}
                                 <div>
-                                    <h3 className={`font-semibold text-sm ${isRisky ? 'text-red-400' : 'text-emerald-400'}`}>Integronix Risk Score: {riskScore}/100</h3>
+                                    <h3 className={`font-semibold text-sm ${isRisky ? 'text-red-400' : 'text-emerald-400'}`}>
+                                        Integronix Risk Score: {Math.round(riskScore * 100)}%
+                                    </h3>
                                     <p className="text-xs text-slate-300 mt-1">
                                         {isRisky ? 'High risk of overcoding detected. Scrutiny recommended prior to payment.' : 'Algorithm indicates high clinical-to-code alignment. Low risk.'}
                                     </p>
@@ -287,7 +338,150 @@ export default function AdjudicateClaimPage({ params }: { params: { id: string }
                     )}
                 </div>
 
-                {/* Financials & Action Panel */}
+                    {/* ── TICKET-04: Payer Edit Codes Panel ── */}
+                    {claim.status === 'SUBMITTED' && (
+                        <div className="bg-slate-900/50 rounded-2xl border border-amber-900/30 p-6">
+                            <div className="flex items-center justify-between mb-4">
+                                <h2 className="text-lg font-bold text-white flex items-center gap-2">
+                                    <Pencil className="w-5 h-5 text-amber-400" />
+                                    Edit Codes
+                                    {alreadyEdited && (
+                                        <span className="ml-2 text-[10px] font-bold uppercase tracking-widest px-2 py-1 rounded bg-amber-500/10 text-amber-400 border border-amber-500/20">
+                                            Payer Edited
+                                        </span>
+                                    )}
+                                </h2>
+                                {!editOpen ? (
+                                    <button
+                                        onClick={openEditPanel}
+                                        className="flex items-center gap-1.5 text-xs font-semibold text-amber-400 hover:text-amber-300 border border-amber-500/20 bg-amber-500/5 hover:bg-amber-500/10 rounded-lg px-3 py-1.5 transition-all"
+                                    >
+                                        <Pencil className="w-3 h-3" /> {alreadyEdited ? 'Edit Again' : 'Edit Codes'}
+                                    </button>
+                                ) : (
+                                    <button
+                                        onClick={() => setEditOpen(false)}
+                                        className="flex items-center gap-1.5 text-xs font-semibold text-slate-400 hover:text-slate-300 transition-colors"
+                                    >
+                                        <X className="w-3.5 h-3.5" /> Cancel
+                                    </button>
+                                )}
+                            </div>
+
+                            {!editOpen ? (
+                                <p className="text-xs text-slate-400">
+                                    {alreadyEdited
+                                        ? `Previously edited. Reason: "${(claim as any).payer_edit_reason}"`
+                                        : 'If the hospital-proposed codes are incorrect, click Edit Codes to correct them before approving or denying.'}
+                                </p>
+                            ) : (
+                                <div className="space-y-4">
+                                    {/* ICD Code Rows */}
+                                    {editIcdCodes.length > 0 && (
+                                        <div>
+                                            <p className="text-[10px] text-slate-500 uppercase tracking-wider font-semibold mb-2">Diagnosis Codes (ICD)</p>
+                                            <div className="space-y-2">
+                                                {editIcdCodes.map((icd, idx) => (
+                                                    <div key={idx} className="flex gap-2 items-center">
+                                                        <input
+                                                            className="w-32 bg-slate-800 border border-white/10 rounded-lg px-2 py-1.5 text-xs font-mono text-indigo-300 focus:border-indigo-400 outline-none"
+                                                            value={icd.code}
+                                                            onChange={e => {
+                                                                const next = [...editIcdCodes];
+                                                                next[idx] = { ...next[idx], code: e.target.value };
+                                                                setEditIcdCodes(next);
+                                                            }}
+                                                            placeholder="ICD code"
+                                                        />
+                                                        <input
+                                                            className="flex-1 bg-slate-800 border border-white/10 rounded-lg px-2 py-1.5 text-xs text-slate-300 focus:border-indigo-400 outline-none"
+                                                            value={icd.description}
+                                                            onChange={e => {
+                                                                const next = [...editIcdCodes];
+                                                                next[idx] = { ...next[idx], description: e.target.value };
+                                                                setEditIcdCodes(next);
+                                                            }}
+                                                            placeholder="Description"
+                                                        />
+                                                        <button
+                                                            onClick={() => setEditIcdCodes(prev => prev.filter((_, i) => i !== idx))}
+                                                            className="p-1.5 rounded-lg text-red-400/60 hover:text-red-400 hover:bg-red-500/10 transition-colors"
+                                                        >
+                                                            <X className="w-3.5 h-3.5" />
+                                                        </button>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    )}
+
+                                    {/* CPT Code Rows */}
+                                    {editCptCodes.length > 0 && (
+                                        <div>
+                                            <p className="text-[10px] text-slate-500 uppercase tracking-wider font-semibold mb-2">Procedure Codes (CPT)</p>
+                                            <div className="space-y-2">
+                                                {editCptCodes.map((cpt, idx) => (
+                                                    <div key={idx} className="flex gap-2 items-center">
+                                                        <input
+                                                            className="w-24 bg-slate-800 border border-white/10 rounded-lg px-2 py-1.5 text-xs font-mono text-amber-300 focus:border-amber-400 outline-none"
+                                                            value={cpt.cpt_code}
+                                                            onChange={e => {
+                                                                const next = [...editCptCodes];
+                                                                next[idx] = { ...next[idx], cpt_code: e.target.value };
+                                                                setEditCptCodes(next);
+                                                            }}
+                                                            placeholder="CPT code"
+                                                        />
+                                                        <input
+                                                            className="flex-1 bg-slate-800 border border-white/10 rounded-lg px-2 py-1.5 text-xs text-slate-300 focus:border-amber-400 outline-none"
+                                                            value={cpt.description}
+                                                            onChange={e => {
+                                                                const next = [...editCptCodes];
+                                                                next[idx] = { ...next[idx], description: e.target.value };
+                                                                setEditCptCodes(next);
+                                                            }}
+                                                            placeholder="Description"
+                                                        />
+                                                        <button
+                                                            onClick={() => setEditCptCodes(prev => prev.filter((_, i) => i !== idx))}
+                                                            className="p-1.5 rounded-lg text-red-400/60 hover:text-red-400 hover:bg-red-500/10 transition-colors"
+                                                        >
+                                                            <X className="w-3.5 h-3.5" />
+                                                        </button>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    )}
+
+                                    {/* Reason (required) */}
+                                    <div>
+                                        <p className="text-[10px] text-slate-500 uppercase tracking-wider font-semibold mb-1.5">Reason for Edit <span className="text-red-400">*</span></p>
+                                        <textarea
+                                            rows={2}
+                                            className="w-full bg-slate-800 border border-white/10 rounded-lg px-3 py-2 text-xs text-slate-200 focus:border-amber-400 outline-none resize-none"
+                                            placeholder="Explain why these codes were changed..."
+                                            value={editReason}
+                                            onChange={e => setEditReason(e.target.value)}
+                                        />
+                                    </div>
+
+                                    {editError && <p className="text-xs text-red-400">{editError}</p>}
+
+                                    <button
+                                        onClick={handleSaveEdits}
+                                        disabled={editLoading || !editReason.trim()}
+                                        className="w-full flex items-center justify-center gap-2 bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 border border-amber-500/20 font-bold px-4 py-2.5 rounded-xl text-sm transition-all disabled:opacity-50"
+                                    >
+                                        <Save className="w-4 h-4" />
+                                        {editLoading ? 'Saving...' : 'Save Code Edits'}
+                                    </button>
+                                </div>
+                            )}
+                        </div>
+                    )}
+
+                    {/* Financials & Action Panel */}
                 <div className="space-y-6">
                     <div className="bg-slate-900/50 rounded-2xl border border-emerald-900/30 p-6">
                         <h2 className="text-lg font-bold text-white mb-4">Financials</h2>

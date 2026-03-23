@@ -108,7 +108,13 @@ export default function ResultsPanel({ result, onReanalyze, orgId }: Props) {
                 <div className="w-px h-8 bg-white/10 hidden sm:block" />
                 <div className="flex flex-col gap-0.5 sm:flex">
                     <span className="mono-label">Standard</span>
-                    <span className="text-xs font-mono text-slate-300">ICD-10-CM 2024</span>
+                    <span className="text-xs font-mono text-slate-300">
+                        {result.mapping_path === 'who_api_icd11'
+                            ? 'WHO ICD-11'
+                            : result.mapping_path === 'who_api_icd10'
+                            ? 'WHO ICD-10'
+                            : (result.extraction_metadata?.icd_version ?? 'ICD-10-CM 2024')}
+                    </span>
                 </div>
                 <div className="flex flex-col gap-0.5 sm:flex">
                     <span className="mono-label text-success-light">Hospital Revenue</span>

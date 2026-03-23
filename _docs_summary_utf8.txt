@@ -1,0 +1,698 @@
+﻿=== E:\Project _ 2026\integronix\docs\README.md ===
+# Integronix Documentation
+
+Welcome to the central documentation hub for **Integronix** â€” the Agentic AI-powered Revenue Integrity Engine built for the Virtusa Jatayu Hackathon.
+
+To make navigation simple and intuitive, our documentation is structured into five logical domains:
+
+## ðŸŽ¯ 1. Product & Strategy
+*For leadership, PMs, and judges to understand the "Why" and the "What."*
+* [`master_project_documentation.md`](./product_and_strategy/master_project_documentation.md) â€” Comprehensive master documentation.
+* [`introduction.md`](./product_and_strategy/introduction.md) â€” High-level introduction to the system.
+
+=== E:\Project _ 2026\integronix\docs\architecture_and_backend\api_design_and_endpoints.md ===
+# API Design and Endpoints
+
+## Design Principles
+
+- **Simplicity and Power**: The API is designed to be simple to use while exposing the full power of the underlying agentic pipeline. We've consolidated the entire workflow into two primary endpoints.
+- **API-First**: The frontend is fully decoupled from the backend logic, interacting only through this well-defined API.
+- **Pydantic Models for Validation**: All request and response bodies are strictly defined and validated using Pydantic models, ensuring data integrity from end to end.
+- **Auto-generated OpenAPI Docs**: FastAPI automatically generates interactive OpenAPI (Swagger) documentation, available at the `/docs` endpoint for easy exploration and testing.
+
+---
+
+=== E:\Project _ 2026\integronix\docs\architecture_and_backend\architecture_overview.md ===
+# Architecture Overview
+
+## Architecture Philosophy
+
+Our architectural philosophy is centered on a hybrid approach that leverages the strengths of Large Language Models (LLMs) for what they do bestâ€”understanding and reasoning over unstructured textâ€”while relying on deterministic, rule-based engines for tasks that require 100% accuracy and auditability.
+
+- **LLM for Reasoning, Not for Final Decisions**: We use a powerful LLM (via Groq) exclusively for the initial, high-level task of clinical entity extraction. It reads the unstructured clinical notes and identifies potential diagnoses, procedures, and clinical concepts. It does **not** select the final billable code.
+- **Deterministic Engine for Code Selection**: The final selection of an ICD code is performed by a deterministic Python-based engine. This engine uses a scoring algorithm based on factors like code specificity, negation detection, and frequency. This guarantees that the output is repeatable, explainable, and free from the risk of LLM "hallucinations."
+- **Agentic Orchestration with LangGraph**: The entire multi-step workflow is managed as a stateful graph using LangGraph. This allows for complex, conditional routing (e.g., "if ICD-11, use WHO API; if ICD-10, use local mapping") and ensures each step of the process is tracked and auditable.
+- **API-First and Decoupled Design**: The system is built with an API-first approach using FastAPI. The frontend (Next.js) is completely decoupled from the backend logic, communicating solely through a well-defined REST API. This allows for independent development, scaling, and maintenance of the user interface and the core engine.
+
+=== E:\Project _ 2026\integronix\docs\architecture_and_backend\data_flow_and_security.md ===
+# Data Flow and Security
+
+## 3.1 End-to-End Data Pipeline
+
+The flow of data through the Integronix system is a carefully orchestrated process designed for security, accuracy, and auditability. Every step is tracked within the `CodingState` object as it traverses the LangGraph pipeline.
+
+1.  **Ingestion & Authentication (Frontend -> API)**:
+    - A user logs into the Next.js web application. Upon successful login, Supabase Auth provides a JSON Web Token (JWT).
+    - The user uploads a clinical document (PDF) or pastes raw text.
+    - The frontend sends a `POST` request to the appropriate backend endpoint (`/code/run-pdf` or `/code/run`). The request includes the data and the JWT in the `Authorization` header.
+
+=== E:\Project _ 2026\integronix\docs\architecture_and_backend\deterministic_icd_decision_algorithm.md ===
+# Deterministic ICD Decision Algorithm
+
+> The `icd_decision_node` is the intellectual core of the Integronix engine. It is a fully deterministic, rule-based algorithm responsible for selecting the final, most accurate ICD code. By deliberately avoiding a final-step LLM "opinion," we ensure every decision is auditable, compliant, and based on a traceable set of rules.
+
+---
+
+## 1. Algorithm Overview
+
+The node receives a list of `candidate_icd_codes` from one of the upstream paths (WHO API, SNOMED mapping, or embedding search). It enriches, scores, and ranks these candidates through a multi-step process to select a winner.
+
+
+=== E:\Project _ 2026\integronix\docs\architecture_and_backend\diagrams.md ===
+# Integronix System Diagrams
+
+This document contains all the architectural, pipeline, and data model diagrams for the Integronix system.
+
+## 1. Use Case Diagram
+
+This diagram illustrates the primary actors and their interactions with the Integronix system, from initial setup to the final coding and auditing process.
+
+```mermaid
+graph TD
+
+=== E:\Project _ 2026\integronix\docs\architecture_and_backend\icd10cm_ingestion_pipeline.md ===
+# ICD-10-CM Ingestion Pipeline
+
+## 1. Overview
+
+This document provides a comprehensive technical breakdown of the ICD-10-CM data ingestion pipeline. This pipeline is responsible for parsing official datasets from the CDC/NCHS, transforming them into a structured format, and loading them into our PostgreSQL database.
+
+The primary goal is to create a rich, relational, and searchable dataset that powers the ICD-10-CM coding path within the main agentic workflow. This includes not just codes and descriptions, but also the hierarchy, coding rules, and a semantic search index.
+
+The entire process is orchestrated by the script `backend/scripts/run_icd_ingestion.py`.
+
+
+=== E:\Project _ 2026\integronix\docs\architecture_and_backend\icd10_integration_and_node_updates.md ===
+# ICD Integration & Dynamic Routing Logic
+
+This document provides a detailed technical explanation of how the Integronix system handles both ICD-10-CM and ICD-11 coding standards. The core of this functionality is a dynamic routing mechanism that selects the appropriate coding path based on organization-specific settings.
+
+See the [System Architecture Diagram](diagrams.md#system-architecture-diagram) for a visual overview.
+
+---
+
+## 1. The Routing Decision: `org_settings`
+
+
+=== E:\Project _ 2026\integronix\docs\architecture_and_backend\Integronix_Architecture_Document.md ===
+
+=== E:\Project _ 2026\integronix\docs\architecture_and_backend\langgraph_agent_design.md ===
+# LangGraph Agent Design
+
+## Design Philosophy
+
+Our system's intelligence is not derived from a single, monolithic Large Language Model (LLM). Instead, we embrace a true agentic AI architecture, which we define as a system composed of multiple specialized agents, a shared state, the ability to use tools, and conditional routing. This is the core principle behind our choice of LangGraph.
+
+LangGraph is superior to simpler chaining libraries for our needs because our workflow is a **cyclical graph**, not a straight line. We require:
+- **Conditional Routing**: The path the data takes must change based on the context. For example, if an organization is configured for ICD-11, we call the WHO API; otherwise, we use our local SNOMED-to-ICD-10 mapping. If those primary paths fail, we must then route to a fallback vector search.
+- **Stateful Execution**: A shared `CodingState` object is passed between all nodes. This object acts as the "memory" of the workflow, accumulating data from each step, from the initial raw text to the final financial impact analysis.
+- **Modularity and Specialization**: Each node in the graph is a specialized agent with a single, well-defined responsibility. This makes the system highly modular, easier to debug, test, and upgrade.
+
+=== E:\Project _ 2026\integronix\docs\architecture_and_backend\langgraph_explainer.md ===
+# LangGraph: The "Brain" of Our AI Pipeline Explained
+
+## What is LangGraph? A Simple Analogy
+
+Imagine a patient's chart in a hospital. This chart doesn't just stay in one place; it moves through a series of specialists in a specific order.
+
+1.  **Admission Desk (Node 1)**: A clerk takes the patient's physical file (a PDF) and transcribes the important information into a new, clean digital chart (`raw_text`).
+2.  **Triage Nurse (Node 2)**: An experienced nurse (our LLM) reads the transcribed notes and, using their broad knowledge, summarizes the key issues: "Looks like diabetes with kidney problems." They write this summary in the chart (`structured_entities`).
+3.  **Specialist Coordinator (Nodes 4 & 5)**: This coordinator looks at the nurse's summary.
+    - If the hospital has a special "Diabetes-Kidney" protocol (our `snomed_icd_map`), they send the chart directly to the Nephrology department.
+
+=== E:\Project _ 2026\integronix\docs\architecture_and_backend\langgraph_snomed_flow.md ===
+# The ICD Resolution Flow: WHO API, SNOMED, and Vector Search
+
+The core of the Integronix engine's accuracy lies in its intelligent, multi-layered approach to resolving a clinical diagnosis into a final, billable ICD code. This is not a single step but a sophisticated, conditional workflow orchestrated by LangGraph, primarily centered around the `snomed_resolver` and `snomed_icd_map` nodes.
+
+This document details that critical flow.
+
+---
+
+## The `snomed_resolver` Node: The Grand Central Station
+
+
+=== E:\Project _ 2026\integronix\docs\architecture_and_backend\system_architecture.md ===
+# System Architecture
+
+## 2.1 Architectural Overview
+The Integronix system is engineered on a modern, cloud-native, and API-first architecture designed for high performance, scalability, and robust security. The architecture is logically segmented into four primary tiers, ensuring a clear separation of concerns and enabling independent development and scaling of each component.
+
+1.  **Presentation Layer (Frontend)**: A responsive and interactive web application built with Next.js, providing the user interface for administrators, coders, and auditors.
+2.  **Application & API Layer (Backend)**: A high-performance backend built with Python and FastAPI, which exposes a RESTful API and serves as the gateway to the core intelligence of the system.
+3.  **Agentic AI Pipeline (LangGraph)**: The heart of the system. A sophisticated, stateful workflow built with LangGraph that orchestrates a series of specialized agents to perform the end-to-end medical coding and auditing process.
+4.  **Data & Persistence Layer**: A secure and scalable data store built on PostgreSQL and managed via Supabase, handling structured data, user information, multi-tenancy, and the powerful `pgvector` extension for semantic search.
+
+
+=== E:\Project _ 2026\integronix\docs\architecture_and_backend\tech_stack_and_conclusion.md ===
+# Technology Stack & Architectural Conclusion
+
+This document provides a summary of the technology stack used to build Integronix and concludes with the core architectural principles that guide the system's design.
+
+---
+
+## 1. Technology Stack
+
+| Component | Technology / Service | Rationale & Key Usage |
+| :--- | :--- | :--- |
+
+=== E:\Project _ 2026\integronix\docs\architecture_and_backend\vector_embedding_pipeline.md ===
+# Vector Embedding Pipeline for Semantic Search
+
+## 1. Purpose
+
+The vector embedding pipeline serves as a critical **fallback mechanism** in our agentic workflow. When the primary, high-precision mapping paths (e.g., WHO API or direct SNOMED-to-ICD crosswalk) fail to produce candidate codes, the system uses semantic vector search to find the most clinically similar ICD codes from our database.
+
+This ensures robustness, guaranteeing that the system can provide relevant suggestions even for ambiguous or poorly defined clinical text. This process is powered by the `pgvector` extension in our Supabase PostgreSQL database.
+
+---
+
+
+=== E:\Project _ 2026\integronix\docs\database_and_schemas\2026-03-19_snomed_icd_map_migration.md ===
+# SNOMED-ICD Map Fix - 2026-03-19
+
+## Summary
+We standardized the SNOMED-to-ICD bridge table naming and reseeded a small, high-value demo mapping set so the deterministic mapping path works cleanly in Supabase.
+
+## What Changed
+- Renamed the bridge column to `icd_code_id` (from `icd_code`) if it existed.
+- Ensured `icd_codes.code` has a unique constraint for FK integrity.
+- Recreated the FK from `snomed_icd_map.icd_code_id` to `icd_codes.code` with cascade rules.
+- Seeded required SNOMED concepts and ICD codes, then inserted 5 demo mappings.
+
+=== E:\Project _ 2026\integronix\docs\database_and_schemas\auth_roles_and_tenant_setup.md ===
+# Authentication, Roles, & Multi-Tenant Architecture
+
+This document provides a comprehensive reference for Integronix's multi-tenant structure, user roles, and how they bridge with Supabase Authentication.
+
+## 1. Architectural Overview
+
+Integronix uses a **3-tier organizational model** to strictly isolate and compartmentalize data across different clients and their facilities. 
+
+```
+Organization  (Level 1 - The Client: e.g., Apollo Hospitals Group)
+
+=== E:\Project _ 2026\integronix\docs\database_and_schemas\database_schema_explained_simply.md ===
+# Integronix Database Schema Explained Simply
+
+> **Who is this for?** Stakeholders, product managers, or engineers new to the project who need a high-level conceptual understanding of how data is organized before diving into raw SQL.
+> This document explains the core tables, their purpose, and how they connect using simple analogies.
+
+---
+
+## ðŸ¥ Think of the Database Like a Hospital Filing System
+
+To manage complex medical data securely across many clients, we organize our database logically. Imagine a real hospital network:
+
+=== E:\Project _ 2026\integronix\docs\database_and_schemas\fhir_json_schema.md ===
+# 13 â€” FHIR-Aligned Internal JSON Schema
+
+## Design Philosophy
+
+- We do NOT build a full FHIR server (that's enterprise Phase 4)
+- We DO align our internal JSON structures to FHIR resource shapes
+- This ensures interoperability readiness and impresses technically-aware judges
+- All internal API responses and DB JSONB fields follow FHIR-adjacent structure
+
+---
+
+=== E:\Project _ 2026\integronix\docs\database_and_schemas\initial_database_schema.md ===
+# 07 â€” Database Schema
+
+## Design Decisions
+
+- Use a **mini curated ICD-10 dataset** (~300â€“500 codes) for POC
+- Do NOT import the full 70,000+ code set
+- Use **pgvector** extension for embedding-based similarity search
+- Revenue values are **simulated** (hardcoded) for POC stage
+- All audit sessions are **logged** for traceability
+
+
+=== E:\Project _ 2026\integronix\docs\database_and_schemas\snomed_ct_ingestion_plan.md ===
+# SNOMED CT Ingestion Plan (RF2 -> Database)
+
+This document defines a production-grade plan to ingest the full SNOMED CT RF2 release into our database, map SNOMED to ICD-10-CM, and keep the data continuously updated. The goal is a rigid, auditable, and reliable clinical terminology layer that supports the existing nodes in the pipeline.
+
+---
+
+## 1) Objectives
+
+- Ingest the **full SNOMED CT RF2 release** into core tables.
+- Keep **concepts, descriptions, relationships, and refsets** consistent and queryable.
+
+=== E:\Project _ 2026\integronix\docs\database_and_schemas\supabase_schema_full.md ===
+# 16 â€” SQL Schema: SNOMED Support & Full Database
+
+> **This is the complete, authoritative database schema for Integronix.**
+> Run all SQL in Supabase â†’ SQL Editor in the order shown here.
+
+---
+
+## Step 0: Enable Required Extensions
+
+```sql
+
+=== E:\Project _ 2026\integronix\docs\medical_domain_knowledge\general_knowledge_reference.md ===
+# 21 â€” Knowledge Reference: Seed Data, Agents, LangGraph & Test Cases
+
+> **Purpose:** This is the deep-explainability document for Integronix.
+> Use this during hackathon Q&A, architecture review, and future development.
+> Written: 25-Feb-2026 | Status: COMPLETE (9/9 tests passing)
+
+---
+
+## PART 1 â€” Seed Data in the Database
+
+
+=== E:\Project _ 2026\integronix\docs\medical_domain_knowledge\icd10cm_dataset_notes.md ===
+# ICD-10-CM FY2026 Source Dataset Notes
+
+## Scope
+This document summarizes the FY2026 ICD-10-CM source datasets downloaded from CMS and extracted under ICD-data. It describes structure, field layouts, and how each source should be used in a deterministic ingestion pipeline.
+
+## Source Files (Local Paths)
+- ICD-data/icd10orderfiles/icd10cm_codes_2026.txt
+- ICD-data/icd10orderfiles/icd10cm_order_2026.txt
+- ICD-data/table-and-index/Table and Index/icd10cm_tabular_2026.xml
+- ICD-data/table-and-index/Table and Index/icd10cm_index_2026.xml
+
+=== E:\Project _ 2026\integronix\docs\medical_domain_knowledge\medical_coding_systems_reference.md ===
+# 12 â€” Medical Coding Systems: ICD-10, SNOMED, LOINC, CPT
+
+> Understanding these systems is critical for technical depth in Q&A and for correct data storage design.
+
+---
+
+## The 4 Systems and Their Roles
+
+| System | Full Name | Used For | Managed By |
+|---|---|---|---|
+
+=== E:\Project _ 2026\integronix\docs\medical_domain_knowledge\snomed_to_icd_mapping_strategy.md ===
+# 14 â€” SNOMED to ICD-10 Mapping Strategy
+
+## Why This Mapping Exists
+
+EHRs store clinical diagnoses using **SNOMED CT** concepts (rich clinical meaning).
+Insurance claims require **ICD-10-CM** codes (billing representation).
+
+**The gap between them is the mapping problem.**
+
+```
+
+=== E:\Project _ 2026\integronix\docs\medical_domain_knowledge\who_icd_api_technical_reference.md ===
+# ICD API Integration â€” Technical Reference & Implementation
+
+> **Status:** âœ… Phase 1 Complete â€” Live WHO ICD API integrated and verified  
+> **Verified:** 2026-03-12 â€” ICD-11 MMS search returning real codes  
+> **API Version:** v2 (required header: `API-Version: v2`)  
+> **Base URL:** `https://id.who.int`
+
+---
+
+## Overview
+
+=== E:\Project _ 2026\integronix\docs\medical_domain_knowledge\who_icd_integration_plan.md ===
+# 26 â€” WHO ICD API Integration, Production Data Layer & GCP Hosting Plan
+
+> **Type:** Living Progress Document â€” update checkboxes as each step completes  
+> **Created:** 2026-03-12 | **Last Updated:** 2026-03-12  
+> **Owner:** Engineering Team  
+> **Goal:** Make Integronix production-ready: WHO ICD API (ICD-11 primary, ICD-10 on request), real data layer, GCP Cloud Run deployment
+
+---
+
+## Progress Tracker
+
+=== E:\Project _ 2026\integronix\docs\product_and_strategy\hospital_rcm_workflow.md ===
+# 25 â€” Hospital Revenue Cycle: Full Workflow, Pain Points & Integronix Solution
+
+> **Document Type:** Strategic & Technical Reference  
+> **Created:** 2026-03-11  
+> **Audience:** Product, Engineering, Sales, Hackathon Judges  
+> **Purpose:** End-to-end explanation of how hospitals process clinical documentation into reimbursement â€” and exactly where Integronix automates and fixes the broken parts.
+
+---
+
+## PART 1: THE FULL HOSPITAL REVENUE CYCLE â€” FROM PATIENT TO PAYER
+
+=== E:\Project _ 2026\integronix\docs\product_and_strategy\introduction.md ===
+# 1 Introduction
+
+## 1.1 Purpose
+
+This document provides a comprehensive architectural overview of the **CodePerfect Integronix** system, using a number of different architectural views to depict different aspects of the system. It is intended to capture and convey the significant architectural decisions, which have been made on the system, specifically aligned with the requirements for the Virtusa hackathon and the Ayushman Bharat Digital Mission (ABDM) compliance for the Indian healthcare ecosystem. The architecture defines how unstructured clinical text and discharge summaries are processed into standardized ICD-10 and ICD-11 codes.
+
+## 1.2 Scope
+
+This architecture document covers the core capabilities and structural design of the Integronix system. 
+**In Scope:**
+
+=== E:\Project _ 2026\integronix\docs\product_and_strategy\master_project_documentation.md ===
+# Integronix â€” AI Clinical Coding Engine
+## Complete Project Documentation
+
+> **Project:** Integronix  
+> **Stack:** FastAPI Â· LangGraph Â· Groq (LLaMA 3.3-70B) Â· Supabase Â· pgvector Â· sentence-transformers  
+> **Build period:** Feb 2026  
+> **Purpose:** Hackathon project â€” intelligent ICD-10-CM coding engine that detects undercoding, overcoding, and revenue optimization opportunities in clinical documentation.
+
+---
+
+
+=== E:\Project _ 2026\integronix\docs\product_and_strategy\project_overview.md ===
+# 01 â€” Project Overview
+
+## Project Name
+**Integronix â€” Revenue Integrity Engine**
+*(Internal codename: CodePerfect)*
+
+---
+
+## Problem Statement
+
+
+=== E:\Project _ 2026\integronix\docs\product_and_strategy\qa_preparation.md ===
+# 10 â€” Q&A Preparation
+
+> These are the hard questions judges or mentors will ask.
+> Practice these until the answers come out naturally and confidently.
+
+---
+
+## ðŸ§  Technical Questions
+
+---
+
+=== E:\Project _ 2026\integronix\docs\product_and_strategy\rcm_user_journey.md ===
+# The Integronix Story: End-to-End Revenue Cycle Management (RCM)
+
+This story maps out the real-world interactions between a Healthcare Provider (Hospital) and a Health Insurance Company (Payer) on the Integronix platform. It defines the product vision and dictates our upcoming dev sprints.
+
+---
+
+## ðŸ—ï¸ Chapter 1: Hospital Onboarding & Configuration
+**City General Hospital (CGH)** decides they are losing too much money to billing errors and signs up for Integronix.
+
+1. **Organization Setup:** The Hospital Admin creates an Organization account for CGH. They set up branches (e.g., "Downtown Campus", "North Wing") and invite users with specific roles: Doctors (who upload documents) and Medical Coders (who review the AI's work).
+
+=== E:\Project _ 2026\integronix\docs\product_and_strategy\real_world_failures_and_cases.md ===
+# 23 â€” Real-World Medical Coding Failures
+> **Purpose:** Business justification for Integronix. These are verified, publicly documented cases of ICD coding failures causing massive financial and legal consequences.
+> Use these in the Architecture Document, pitch deck, and Q&A preparation.
+
+---
+
+## The Scale of the Problem
+
+| Statistic | Source |
+|---|---|
+
+=== E:\Project _ 2026\integronix\docs\product_and_strategy\scope_and_features.md ===
+# 04 â€” POC Scope & Features
+
+## Scope Philosophy
+
+> "Build a focused, working POC. Not a full enterprise product. Not over-engineered."
+
+The goal is to **prove the concept**, not ship a product.
+
+---
+
+
+=== E:\Project _ 2026\integronix\docs\product_and_strategy\stage2_requirements.md ===
+# 02 â€” Stage 2 Requirements
+
+## What Stage 2 Demands
+
+Stage 2 of the Virtusa Jatayu Hackathon requires the following deliverables:
+
+| Deliverable | Description |
+|---|---|
+| **Architecture Document** | System diagram, data flow, tech choices, security, scalability, limitations, and roadmap |
+| **PPT Presentation** | Clear slides covering problem, solution, architecture, demo, business impact |
+
+=== E:\Project _ 2026\integronix\docs\product_and_strategy\winning_strategy.md ===
+# 03 â€” Winning Strategy
+
+> **Goal: Finish #1 out of 20 teams. Not just qualify â€” be undeniable.**
+
+---
+
+## Mindset Shift
+
+Stop thinking like a participant. Think like a finalist.
+
+
+=== E:\Project _ 2026\integronix\docs\sprints_and_progress\backend_bugs_and_fixes.md ===
+# Backend Bug Report & Fix Log
+**Project:** Integronix â€” Revenue Integrity Platform  
+**Review Date:** 2026-03-10  
+**Reviewed By:** Senior Developer (AI Code Review)  
+**Files Affected:** 8 backend files  
+**Total Bugs Fixed:** 8 (1 Critical Â· 4 High Â· 3 Medium) + 1 Optimization  
+
+---
+
+## Table of Contents
+
+=== E:\Project _ 2026\integronix\docs\sprints_and_progress\build_progress_tracker.md ===
+# 20 â€” Build Progress Log
+
+> **Live tracking document.** Updated as each phase is completed.
+> This is the single source of truth for "what's done vs what's next."
+> **Last Updated: 25-Feb-2026 | Current Status: 9/9 Tests Passing âœ…**
+
+---
+
+## âœ… Phase 0: Architecture & Documentation
+**Status: COMPLETE**
+
+=== E:\Project _ 2026\integronix\docs\sprints_and_progress\foundation_implementation_log.md ===
+# 19 â€” Foundation Implementation: Step-by-Step Execution Guide
+
+> **Your current mission: Stabilize the database and backend before touching any agents.**
+> Complete each checkpoint fully before moving to the next.
+> Do not proceed if anything at the current checkpoint is broken.
+
+---
+
+## ðŸ›‘ Checkpoint 0 â€” Confirm Architecture Understanding
+
+
+=== E:\Project _ 2026\integronix\docs\sprints_and_progress\frontend_bugs_and_fixes.md ===
+# Frontend Code Review â€” Integronix
+**Reviewer:** Senior Developer (AI Code Review)  
+**Scope:** All frontend source files  
+**Date:** 2026-03-10  
+**Files Reviewed:** 18 files across `src/app`, `src/components`, `src/lib`, `src/types`, `src/middleware.ts`  
+**Total Issues Found:** 9 (2 High Â· 5 Medium Â· 2 Minor) + 1 Optimization
+
+---
+
+## Table of Contents
+
+=== E:\Project _ 2026\integronix\docs\sprints_and_progress\master_sprint_plan.md ===
+# 09 â€” 4-Week Sprint Plan
+
+## Context
+
+- Solo execution
+- ~4 weeks build time
+- Goal: Stable, demo-ready POC by Week 4
+- Weekly mentor connects require showing measurable progress
+
+---
+
+=== E:\Project _ 2026\integronix\docs\sprints_and_progress\phases_3_to_7_copilot_handoff.md ===
+# Integronix â€” Remaining Work Handoff (Phases 3â€“7)
+
+> Use this with **VSCode Copilot** â€” recommended model: **GPT-4o** (most accurate for multi-file backend + DevOps tasks)
+
+---
+
+## Completed So Far
+
+- âœ… Phase 1 â€” WHO ICD API integrated (`services/who_icd_service.py`, rewired Nodes 3/4/5)
+- âœ… Phase 2 â€” `org_settings` table live in Supabase (migration 019 ran, seeded with ICD-11)
+
+=== E:\Project _ 2026\integronix\docs\sprints_and_progress\product_engineering_review_march_2026.md ===
+# Product & Engineering Review (March 2026)
+
+This document records a **rigid, productionâ€‘grade review** of the Integronix codebase. It is **not** a deployment review. It focuses on **development quality, architecture, domain correctness, client readiness, and UI integrity**.
+
+Each item includes:
+- **Simple explanation** (nonâ€‘technical)
+- **Technical explanation**
+- **What could go wrong**
+- **Recommended fix**
+- **How to verify**
+
+=== E:\Project _ 2026\integronix\docs\sprints_and_progress\sprint1_cpt_integration\01_cpt_core_plan.md ===
+# Sprint 1: Core CPT & HCPCS Integration
+
+**Goal:** Establish a real-world procedural billing database using free CMS data and integrate it into the Integronix AI pipeline via semantic search.
+
+## Phase 1: Data Acquisition & Setup
+- [x] Write Python script (`scripts/seed_cpt_codes.py`) to fetch a realistic sample of high-frequency procedures from CMS Medicare Physician Fee Schedule (MPFS) and HCPCS Level II.
+- [x] Create `cpt_hcpcs_codes` Supabase table migration (`020_cpt_codes.sql`) with a `vector(384)` column for semantic matching.
+- [x] Bulk upsert the real CMS dataset into Supabase.
+
+> **Phase 1 Implementation Notes (Senior Data Engineer Log):**
+
+=== E:\Project _ 2026\integronix\docs\sprints_and_progress\sprint2_dynamic_pricing\01_dynamic_pricing_plan.md ===
+# Sprint 2: Dynamic Pricing & Org Multipliers
+
+**Goal:** Implement real-world Revenue Cycle Management (RCM) economics by applying hospital-specific pricing multipliers to the base CMS procedural rates.
+
+## Phase 1: Database Updates
+- [x] Update the `org_settings` Supabase table to include a `cpt_pricing_multiplier` column.
+- [x] Set demo multipliers (e.g., "City General Hospital" = 1.0, "Premium Care Institute" = 1.8).
+
+> **Phase 1 Implementation Notes (Senior Database Engineer Log):**
+> * **Schema Alteration:** Added a `cpt_pricing_multiplier` numeric column to the `org_settings` table via `022_dynamic_pricing_multiplier.sql`. 
+
+=== E:\Project _ 2026\integronix\docs\sprints_and_progress\sprint3_payer_integration\01_payer_workflow_plan.md ===
+# Sprint 3: Payer Integration & Claim Workflow
+
+**Goal:** Turn static coding results into actionable "Claims" that can be submitted to Payers, tracked for status, and adjudicated (Approved/Paid).
+
+## Phase 1: The Claim Engine (Database & API)
+- [x] Create the `claims` table to link `clinical_cases` and `billing_results` to Payers.
+- [x] Implement a `POST /api/v1/claims/submit` endpoint that takes a coding result and freezes it into a "Filed Claim".
+- [x] Add a `status` field to claims: `DRAFT`, `SUBMITTED`, `ADJUDICATING`, `PAID`, `DENIED`.
+
+> **Phase 1 Implementation Notes (Senior Database & Data Engineer Log):**
+
+=== E:\Project _ 2026\integronix\docs\sprints_and_progress\sprint4_frontend_architecture\01_frontend_restructure_plan.md ===
+# Sprint 4: Enterprise Frontend Architecture & Payer Portal
+
+**Goal:** Transform the monolithic `/dashboard` Next.js application into a modular, highly scalable, and role-based ecosystem (Hospital vs. Payer). Ensure seamless page flow, unbroken imports (leveraging `@` aliases), and robust layout-level authorization.
+
+---
+
+## 1. Architectural Vision (Senior Frontend Engineer Perspective)
+
+An industry-standard enterprise B2B platform like Integronix requires **Tenant Segregation** at the routing level. A Medical Coder at a hospital should never accidentally stumble into the Payer adjudication screens, and Vice Versa.
+
+
+=== E:\Project _ 2026\integronix\docs\sprints_and_progress\sprint5_trust_and_automation\01_sprint5_audit_and_rules_architecture.md ===
+# Sprint 5: Trust & Automation (Phase 1 & Phase 2)
+**Status:** Completed (MVP)
+**Focus:** HIPAA Compliance, Immutable Action Auditing, and Deterministic Automated Adjudication.
+
+---
+
+## 1. Architectural Changes Made
+
+To move Integronix from a prototype demonstration into a resilient enterprise platform, we needed to establish trust (who clicked what button) and introduce backend efficiency logic (not every claim needs human review).
+
+
+=== E:\Project _ 2026\integronix\docs\sprints_and_progress\sprint6_appeals_edi\01_sprint6_appeals_and_edi_architecture.md ===
+# Sprint 6: Appeals & Interoperability
+**Status:** Completed
+**Focus:** Hospital Appeals Workflow and EDI X12 Export formatting.
+
+---
+
+## 1. Architectural Additions
+
+In Sprint 5, we introduced automated payer Denials via the Rules Engine. In Sprint 6, we closed the Revenue Cycle loop by allowing Hospitals to dispute those Denials, and finally mapped our bespoke database structures into industry-standard interoperability files.
+
+
+=== E:\Project _ 2026\integronix\docs\sprints_and_progress\sprint7_authentication_rbac\01_sprint7_auth_and_rbac_plan.md ===
+# Sprint 7: Authentication & Role-Based Access Control (RBAC)
+
+## Goal
+Lock down the application so Coders cannot see Billing/RCM sections, Billers cannot see the Insurance Payer Portal, and unauthorized users cannot access the app at all.
+
+## Current Progress Status
+- âœ… **Phase 3 Part 1:** `/auth/login` and `/auth/signup` Next.js pages are already built.
+- âœ… **Phase 3 Part 2:** Supabase Auth SDK integration handles JWT issuance. Auth provider exists and binds auth UUIDs to `public.users` table records.
+- ðŸŸ¡ **Phase 1 Part 1:** DB table for users exists (`migrations/013_create_users.sql` & `017_add_auth_id_to_users.sql`), but the `role` field currently primarily checks for `('admin', 'auditor', 'coder')`. We may need a migration to officially add `payer` and `rcm` (or we need to update the ENUM/constraint).
+- ðŸŸ¡ **Phase 1 Part 2:** Row-Level Security (RLS) policies exist in `015_row_level_security.sql`, but we need to ensure they strictly lock down `claims` and `cases` so users *only* see their organization's data based on their JWT role/organization_id.
+
+=== E:\Project _ 2026\integronix\docs\testing\bugs_and_fixes.md ===
+# ðŸ› Bugs Found & Fixed â€” E2E Testing Session
+
+**Date:** 17â€“18 March 2026  
+**Session:** Sprint 7 E2E Manual Testing  
+**Testers:** Nanda Kishore (coder), Subashini (RCM), Nathin (payer)
+
+---
+
+## Bug 1 â€” `403 Forbidden` on RCM Login
+
+
+=== E:\Project _ 2026\integronix\docs\testing\E2E_Phase3_Manual_Test_Guide.md ===
+# Phase 3: End-to-End (E2E) Testing Guide & Status Report
+
+This document outlines the current state of the Revenue Cycle Management (RCM) End-to-End testing. It details what has been successfully tested, the bugs that were identified and fixed during the automated runs, and provides a step-by-step guide for manually testing the remaining flow.
+
+## 1. Testing Environment State
+
+- **Database Condition:** Clean. Legacy demo data (City General, Star Health) has been wiped. Only **Saveetha Hospitals** (Provider) and **Global Health Insurance** (Payer) exist.
+- **Admin Setup:** A new Admin user (`gokul@saveetha.demo` / `Password123!@#`) was successfully created via SQL for Saveetha Hospitals.
+- **RCM Manager Setup:** Subashini (`subashini@saveetha.demo`) correctly has `branch_id = NULL` because RCM Managers operate at the organization level, managing claims across all branches.
+
+
+=== E:\Project _ 2026\integronix\docs\v1_product\architecture.md ===
+# Architecture Notes (V1)
+
+## Key domain objects
+- **Hospital PDF Upload**
+  - input: de-identified or raw discharge summary
+  - output: structured clinical entities + patient demographics (if documented)
+- **Coding Proposal (Hospital proposed)**
+  - proposed ICD codes (ICD-11 via WHO when enabled, otherwise ICD-10 fallback)
+  - proposed procedure codes (CPT/procedures)
+  - evidence snippets + provenance (WHO/local/embedding/provider)
+
+=== E:\Project _ 2026\integronix\docs\v1_product\engineering_roadmap.md ===
+# Integronix â€” Engineering Roadmap
+## Virtusa Jatayu Hackathon Â· Next Work Items (Assignable)
+
+> **Problem Statement Alignment**
+> Integronix is an AI-driven **hospital-side coding assistant and pre-validation tool** for the Indian healthcare industry.
+> - Hospitals use it to extract ICD/CPT codes from discharge PDFs, validate claims, and submit to payers.
+> - Payers receive a structured, auditable claim (FHIR + EDI) with AI confidence scores and a deterministic trust gate.
+> - The system replaces error-prone manual coding without replacing payer adjudication engines.
+
+---
+
+=== E:\Project _ 2026\integronix\docs\v1_product\fhir_claim_proposal.md ===
+# Feature V1.1: FHIR Claim Proposal (Hospital Proposed Artifact)
+
+## Simple description
+When a hospital uploads a PDF, Integronix already extracts clinical entities and recommends ICD/CPT codes.  
+In V1.1 we will turn that recommendation into a **standards-based FHIR `Claim` proposal JSON** (internal artifact for the payer).
+
+This FHIR `Claim` proposal becomes the â€œtrustable evidence packetâ€ for the payer UI:
+- Payer can see what claim would be sent to insurance (diagnoses + procedures + demographics)
+- Payer can apply their own policy/edits with transparency
+- Later we can derive **EDI 837** from this verified claim (instead of the current simulated EDI)
+
+=== E:\Project _ 2026\integronix\docs\v1_product\progress.md ===
+# V1 Progress Log
+
+## Done (current)
+- WHO ICD-11 lookup + caching into local `icd_codes` works (WHO API v2 â†’ local cache).
+- ICD-11 strings can persist in `coding_results` (dropped `coding_results.ai_icd_code` FK).
+- Fixed EDI export crash by removing dependency on `organizations.address` in the export query.
+- Frontend currency display standardized (no mixed `$` + `â‚¹`).
+- Removed broken payer navigation (`/payer/adjudicate` base route) and routed users safely to the correct pages.
+- Patient identity flow hardened:
+  - Stop using placeholder DOB/name values when missing.
+
+=== E:\Project _ 2026\integronix\docs\v1_product\README.md ===
+# V1 Product (Hospital + Payer Trust)
+
+This folder tracks the V1 â€œreal applicationâ€ direction for the Integronix Hackathon project.
+
+## What V1 means
+- Integronix acts as a **hospital-side coding assistant**:
+  - Extracts clinical entities from hospital PDF
+  - Proposes ICD codes + procedure codes with evidence + provenance
+  - Generates a **FHIR Claim proposal** for internal hospital analysis
+  - Exports an **EDI 837 claim** to send to the payer
+
