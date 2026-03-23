@@ -270,3 +270,32 @@ export async function appealClaim(claimId: string, justification: string): Promi
 export function exportEdiUrl(claimId: string): string {
     return `${API_BASE}/api/v1/claims/export/edi/${claimId}`;
 }
+
+/** Returns the URL for downloading the EDI 835 remittance advice (PAID / DENIED claims only) */
+export function exportEdi835Url(claimId: string): string {
+    return `${API_BASE}/api/v1/claims/export/edi835/${claimId}`;
+}
+
+
+// ── TICKET-04: Payer Edit Codes ───────────────────────────────────────────────
+
+export interface PayerEditPayload {
+    edited_icd_codes: Array<{ code: string; description: string }>;
+    edited_cpt_codes: Array<{ cpt_code: string; description: string }>;
+    edit_reason: string;
+}
+
+/** POST /api/v1/claims/edit/{claimId} — saves payer code corrections before approval */
+export async function payerEditClaim(claimId: string, payload: PayerEditPayload): Promise<{ status: string; message: string; edit_id: string | null }> {
+    const res = await fetch(`${API_BASE}/api/v1/claims/edit/${claimId}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+    });
+    if (!res.ok) {
+        const err = await res.json().catch(() => ({ detail: 'Unknown error' }));
+        throw new ApiError(res.status, err.detail ?? `HTTP ${res.status}`);
+    }
+    return res.json();
+}
+

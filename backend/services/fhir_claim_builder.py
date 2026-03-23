@@ -149,7 +149,11 @@ def build_fhir_claim_proposal(
     for idx, item in enumerate(line_items):
         cpt_code = item.get("cpt_code") or item.get("code") or ""
         cpt_meta = cpt_lookup.get(str(cpt_code), {})
-        base_price = float(item.get("base_price") or item.get("cms_base_price") or 0.0)
+        base_price = float(
+            item.get("gross_charge") or 
+            item.get("base_price") or 
+            item.get("cms_base_price") or 0.0
+        )
 
         item_entry: dict = {
             "sequence": idx + 1,
@@ -211,7 +215,10 @@ def build_fhir_claim_proposal(
             ]
         },
         "use": "claim",
-        "patient": {"reference": "#patient-1"},
+        "patient": {
+            "reference": "#patient-1",
+            **({"display": patient_name} if patient_name else {})
+        },
         "created": now_iso,
         "insurer": {
             "display": payer_name,

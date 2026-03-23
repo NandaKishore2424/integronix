@@ -14,7 +14,7 @@
 2. [Architecture Overview](#2-architecture-overview)
 3. [Tech Stack Decisions](#3-tech-stack-decisions)
 4. [Database Schema](#4-database-schema)
-5. [LangGraph Pipeline — All 8 Nodes](#5-langgraph-pipeline--all-8-nodes)
+5. [LangGraph Pipeline — All 9 Nodes](#5-langgraph-pipeline--all-8-nodes)
 6. [API Endpoints](#6-api-endpoints)
 7. [Production Hardening](#7-production-hardening)
 8. [Scoring Algorithm — Node 6](#8-scoring-algorithm--node-6)
@@ -52,7 +52,7 @@ Integronix automates ICD-10 code selection using a hybrid SNOMED→ICD mapping +
 │  /health  /api/v1/parse/run  /api/v1/code/run  /api/v1/icd/*  │
 │                                                                 │
 │  ┌──────────────────────────────────────────────────────────┐   │
-│  │              LANGGRAPH PIPELINE (8 Nodes)                │   │
+│  │              LANGGRAPH PIPELINE (9 Nodes)                │   │
 │  │                                                          │   │
 │  │  Node1       Node2        Node3        Node4             │   │
 │  │  doc_proc → clinical → snomed  → snomed_icd              │   │
@@ -203,7 +203,7 @@ error_detail TEXT
 
 ---
 
-## 5. LangGraph Pipeline — All 8 Nodes
+## 5. LangGraph Pipeline — All 9 Nodes
 
 ### Node 1 — `doc_processing` (`agents/doc_processor.py`)
 - **Input:** `state["pdf_bytes"]` OR `state["raw_text"]` (pre-set via `/code/run`)
@@ -513,7 +513,7 @@ Full test matrix run against `POST /api/v1/code/run`:
 ## 12. Current Project Status
 
 ### ✅ Phase 1–4 + Phase 5A — Backend Complete (All 9/9 Tests Passing)
-- FastAPI backend on port 8000, all 8 nodes wired and tested
+- FastAPI backend on port 8000, all 9 nodes wired and tested
 - Supabase connected, 6 tables seeded
 - Structured JSON logging, `@safe_node` error handling, exception hierarchy
 - Node 5 embedding fallback (threshold=0.55, chapter exclusion, vector format fix)

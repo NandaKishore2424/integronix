@@ -160,7 +160,7 @@ AuthProvider (global context) fires
 
 Coder submits clinical note
     ↓ runCodingPipeline() → POST /api/v1/code/run
-    ↓ Backend AI pipeline runs (8 nodes, ~1.5s)
+    ↓ Backend AI pipeline runs (9 nodes, ~1.5s)
     → Results displayed on Tab 2 (Report)
 ```
 

@@ -94,7 +94,7 @@ Integronix uses two medical knowledge bases: **ICD-10-CM codes** and **SNOMED-CT
 
 ---
 
-## PART 2 — The 8 LangGraph Agents (Nodes)
+## PART 2 — The 9 LangGraph Agents (Nodes)
 
 Each "node" is a Python function decorated with `@safe_node()`. They share a single state object (`CodingState`) which flows through the entire graph.
 
@@ -304,7 +304,7 @@ Each node does ONE thing. LLM extraction (Node 2) is completely separate from IC
 - The deterministic engine makes the final code choice — not the LLM
 
 #### 2. Stateful Flow
-All 8 nodes share `CodingState`. Every node reads what previous nodes produced and adds its own output. This is impossible with a single LLM call.
+All 9 nodes share `CodingState`. Every node reads what previous nodes produced and adds its own output. This is impossible with a single LLM call.
 
 #### 3. Conditional Routing
 ```python
@@ -534,7 +534,7 @@ The 9 test cases are designed to cover:
 | Technology | Role in Integronix |
 |---|---|
 | **Groq (LLaMA 3.3-70b)** | Clinical text → structured JSON extraction ONLY |
-| **LangGraph** | Orchestrates all 8 nodes with state + conditional routing |
+| **LangGraph** | Orchestrates all 9 nodes with state + conditional routing |
 | **FastAPI** | HTTP API layer exposing the LangGraph pipeline |
 | **Supabase (PostgreSQL)** | Stores ICD codes, SNOMED concepts, results, audit logs |
 | **pgvector** | Cosine similarity search for embedding fallback (Node 5) |

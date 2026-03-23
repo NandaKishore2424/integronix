@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { fetchClaims, Claim, appealClaim, exportEdiUrl } from '@/lib/api';
+import { fetchClaims, Claim, appealClaim, exportEdiUrl, exportEdi835Url } from '@/lib/api';
 import { useAuth } from '@/components/AuthProvider';
 import { Landmark, CheckCircle2, Clock, AlertTriangle, Search, Activity, Download } from 'lucide-react';
 
@@ -158,14 +158,26 @@ export default function ClaimsInboxPage() {
                                                     </td>
                                                     <td className="px-6 py-4 whitespace-nowrap text-right">
                                                         <div className="flex items-center justify-end gap-2">
-                                                            <a 
-                                                                href={exportEdiUrl(claim.id)} 
-                                                                target="_blank" 
+                                                            {/* EDI 837: visible for all claims */}
+                                                            <a
+                                                                href={exportEdiUrl(claim.id)}
+                                                                target="_blank"
                                                                 className="p-1.5 text-slate-400 hover:text-white bg-white/5 hover:bg-white/10 rounded-lg transition-colors"
-                                                                title="Export EDI 837"
+                                                                title="Export EDI 837 Claim"
                                                             >
                                                                 <Download className="w-4 h-4" />
                                                             </a>
+                                                            {/* EDI 835: visible only after adjudication */}
+                                                            {['PAID', 'PARTIALLY_PAID', 'DENIED'].includes(claim.status) && (
+                                                                <a
+                                                                    href={exportEdi835Url(claim.id)}
+                                                                    target="_blank"
+                                                                    className="p-1.5 text-indigo-400 hover:text-indigo-300 bg-indigo-500/5 hover:bg-indigo-500/15 rounded-lg transition-colors border border-indigo-500/20"
+                                                                    title="Download Remittance Advice (EDI 835)"
+                                                                >
+                                                                    <Download className="w-4 h-4" />
+                                                                </a>
+                                                            )}
                                                             {(claim.status === 'DENIED' || claim.status === 'PARTIALLY_PAID') && (
                                                                 <button 
                                                                     onClick={() => setAppealingClaim(claim)}
