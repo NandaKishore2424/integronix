@@ -52,7 +52,7 @@ async def snomed_icd_mapping_node(state: CodingState) -> CodingState:
     # relationships between SNOMED and ICD-10 codes.
     crosswalk_rows = await select(
         table="snomed_icd_map",
-        query="icd_code,mapping_type,confidence,is_primary,notes",
+        query="icd_code_id,mapping_type,confidence,is_primary,notes",
         filters={
             "snomed_code": f"eq.{resolved_code}",
             "order":       "confidence.desc",
@@ -78,7 +78,7 @@ async def snomed_icd_mapping_node(state: CodingState) -> CodingState:
             table="icd_codes",
             query="code,description,is_billable,is_cc,is_mcc,base_reimbursement,version",
             filters={
-                "code":        f"eq.{row['icd_code']}",
+                "code":        f"eq.{row['icd_code_id']}",
                 "is_billable": "eq.true", # We only care about codes that can actually be used for billing.
             },
         )

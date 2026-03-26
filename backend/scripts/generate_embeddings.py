@@ -1,94 +1,156 @@
 #!/usr/bin/env python3
 """
-scripts/generate_embeddings.py
-Generates 384-dim embeddings for all ICD codes + SNOMED concepts
-that have NULL embeddings and uploads them to Supabase via REST API.
+Generate embeddings for ICD codes + SNOMED concepts with NULL embeddings.
 
-Run once after running migrations 001-010 and seeding data.
+Uses psycopg2 direct connection for updates (avoids PostgREST NOT NULL restrictions).
+Fetches rows in pages of 1000, encodes in batches of 64 on CPU, commits every 5000.
 
 Usage:
     cd backend
     source venv/bin/activate
     python3 scripts/generate_embeddings.py
 """
-import asyncio
-import sys
-import os
+from __future__ import annotations
 
-# Add backend to path
+import os
+import sys
+import time
+
+# Add backend to path so config is importable
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-import httpx
+from dotenv import load_dotenv
+load_dotenv()
+
+import psycopg2
+from psycopg2.extras import execute_batch
 from sentence_transformers import SentenceTransformer
-from config import settings
 
-SUPABASE_URL = settings.supabase_url
-SUPABASE_KEY = settings.supabase_service_key or settings.supabase_anon_key
-HEADERS = {
-    "apikey":        settings.supabase_anon_key,
-    "Authorization": f"Bearer {SUPABASE_KEY}",
-    "Content-Type":  "application/json",
-    "Prefer":        "return=minimal",
-}
+DATABASE_URL = os.getenv("DATABASE_URL")
+if not DATABASE_URL:
+    raise RuntimeError("DATABASE_URL is required in .env")
 
-print("⏳ Loading sentence-transformers model (all-MiniLM-L6-v2)...")
-model = SentenceTransformer("all-MiniLM-L6-v2")
-print("✅ Model loaded")
+PAGE_SIZE     = 1000
+ENCODE_BATCH  = 64
+COMMIT_EVERY  = 5000
 
 
-def embed(text: str) -> list[float]:
-    return model.encode(text, normalize_embeddings=True).tolist()
+print("Loading model all-MiniLM-L6-v2 on CPU...")
+MODEL = SentenceTransformer("all-MiniLM-L6-v2")
+print("Model ready")
 
 
-async def fetch_rows(client: httpx.AsyncClient, table: str, select: str, limit: int = 500) -> list[dict]:
-    r = await client.get(
-        f"{SUPABASE_URL}/rest/v1/{table}",
-        params={"select": select, "embedding": "is.null", "limit": str(limit)},
-        headers=HEADERS,
-    )
-    return r.json() if r.status_code == 200 else []
+def encode(texts: list[str]) -> list[list[float]]:
+    return MODEL.encode(
+        texts,
+        batch_size=ENCODE_BATCH,
+        normalize_embeddings=True,
+        show_progress_bar=False,
+    ).tolist()
 
 
-async def update_embedding(client: httpx.AsyncClient, table: str, pk_col: str, pk_val: str, embedding: list[float]):
-    r = await client.patch(
-        f"{SUPABASE_URL}/rest/v1/{table}",
-        params={pk_col: f"eq.{pk_val}"},
-        json={"embedding": embedding},
-        headers=HEADERS,
-    )
-    return r.status_code in (200, 204)
+def process_table(
+    conn,
+    *,
+    table: str,
+    pk_col: str,
+    text_col: str,
+    include_pk_in_text: bool,
+) -> int:
+    total = 0
+    t0 = time.perf_counter()
+    pending: list[tuple] = []   # (embedding_list, pk_value)
+
+    with conn.cursor() as fetch_cur, conn.cursor() as update_cur:
+        last_pk = ""
+        page = 0
+        while True:
+            fetch_cur.execute(
+                f"""
+                SELECT {pk_col}, {text_col}
+                FROM {table}
+                WHERE embedding IS NULL
+                  AND {pk_col} > %s
+                ORDER BY {pk_col}
+                LIMIT %s
+                """,
+                (last_pk, PAGE_SIZE),
+            )
+            rows = fetch_cur.fetchall()
+            if not rows:
+                break
+
+            page += 1
+            pks   = [r[0] for r in rows]
+            texts = [
+                f"{r[0]} {r[1] or ''}".strip() if include_pk_in_text else (r[1] or "")
+                for r in rows
+            ]
+
+            vectors = encode(texts)
+            for pk, vec in zip(pks, vectors):
+                pending.append((vec, pk))
+
+            last_pk = pks[-1]
+
+            if len(pending) >= COMMIT_EVERY:
+                execute_batch(
+                    update_cur,
+                    f"UPDATE {table} SET embedding = %s::vector WHERE {pk_col} = %s",
+                    pending,
+                    page_size=1000,
+                )
+                conn.commit()
+                total += len(pending)
+                elapsed = round(time.perf_counter() - t0, 1)
+                print(f"  [{table}] committed {total} embeddings — {elapsed}s elapsed")
+                pending.clear()
+
+        # flush remainder
+        if pending:
+            execute_batch(
+                update_cur,
+                f"UPDATE {table} SET embedding = %s::vector WHERE {pk_col} = %s",
+                pending,
+                page_size=1000,
+            )
+            conn.commit()
+            total += len(pending)
+
+    elapsed = round(time.perf_counter() - t0, 1)
+    print(f"  [{table}] done — {total} embeddings in {elapsed}s")
+    return total
 
 
-async def main():
-    async with httpx.AsyncClient(timeout=30.0) as client:
+def main() -> None:
+    conn = psycopg2.connect(DATABASE_URL)
+    conn.autocommit = False
+    try:
+        print("\nStep 1/2: ICD codes")
+        icd_count = process_table(
+            conn,
+            table="icd_codes",
+            pk_col="code",
+            text_col="description",
+            include_pk_in_text=True,
+        )
 
-        # ── ICD codes ─────────────────────────────────────────────────────────
-        print("\n🔎 Fetching ICD codes with NULL embeddings...")
-        icd_rows = await fetch_rows(client, "icd_codes", "code,description")
-        print(f"   Found {len(icd_rows)} ICD codes to embed")
+        print("\nStep 2/2: SNOMED concepts")
+        snomed_count = process_table(
+            conn,
+            table="snomed_concepts",
+            pk_col="snomed_code",
+            text_col="description",
+            include_pk_in_text=False,
+        )
+    finally:
+        conn.close()
 
-        for i, row in enumerate(icd_rows):
-            text = f"{row['code']} {row['description']}"
-            embedding = embed(text)
-            ok = await update_embedding(client, "icd_codes", "code", row["code"], embedding)
-            status = "✅" if ok else "❌"
-            print(f"   {status} [{i+1}/{len(icd_rows)}] {row['code']} — {row['description'][:50]}")
-
-        # ── SNOMED concepts ────────────────────────────────────────────────────
-        print("\n🔎 Fetching SNOMED concepts with NULL embeddings...")
-        snomed_rows = await fetch_rows(client, "snomed_concepts", "snomed_code,description")
-        print(f"   Found {len(snomed_rows)} SNOMED concepts to embed")
-
-        for i, row in enumerate(snomed_rows):
-            text = row["description"]
-            embedding = embed(text)
-            ok = await update_embedding(client, "snomed_concepts", "snomed_code", row["snomed_code"], embedding)
-            status = "✅" if ok else "❌"
-            print(f"   {status} [{i+1}/{len(snomed_rows)}] {row['snomed_code']} — {row['description'][:50]}")
-
-    print("\n🏆 Embedding generation complete!")
-    print("   Node 5 (embedding fallback) is now ready to use.")
+    print(f"\nEmbedding generation complete")
+    print(f"icd_codes embedded:      {icd_count}")
+    print(f"snomed_concepts embedded: {snomed_count}")
+    print(f"\nNext step: run migrations/schema/013_rebuild_snomed_ivfflat.sql in Supabase SQL Editor")
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()
