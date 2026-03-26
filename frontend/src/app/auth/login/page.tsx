@@ -14,7 +14,6 @@ export default function LoginPage() {
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState('');
 
-    // FIX FE-BUG-007: try/finally ensures setLoading(false) runs on BOTH success and error
     async function handleLogin(e: React.FormEvent) {
         e.preventDefault();
         setLoading(true); setError('');
@@ -37,8 +36,6 @@ export default function LoginPage() {
         }
     }
 
-    // FIX FE-BUG-004: Demo credentials from env vars — not hardcoded in source
-    // FIX FE-BUG-007: try/finally resets loading on both success and failure
     async function handleDemoAccess() {
         setLoading(true); setError('');
         const demoEmail = process.env.NEXT_PUBLIC_DEMO_EMAIL ?? '';
