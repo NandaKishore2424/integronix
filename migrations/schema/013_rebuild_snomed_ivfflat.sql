@@ -1,0 +1,21 @@
+-- Migration 013: SNOMED IVFFlat index — superseded by storage constraints
+--
+-- Original intent: rebuild IVFFlat index on snomed_concepts.embedding with
+-- lists=600 appropriate for 379k rows.
+--
+-- Outcome: On Supabase free tier (500 MB limit), storing 379k × 384-dim
+-- embeddings requires ~1.2 GB (data + IVFFlat index), which exceeds the cap.
+-- The embedding column was dropped from snomed_concepts in favour of
+-- sequential text search on the description column.
+--
+-- This migration is intentionally a no-op. On a paid tier (≥ 8 GB),
+-- re-add the column and rebuild the index:
+--
+--   ALTER TABLE snomed_concepts ADD COLUMN embedding vector(384);
+--   -- populate via: python3 backend/scripts/generate_embeddings.py
+--   CREATE INDEX snomed_concepts_embedding_idx
+--     ON snomed_concepts
+--     USING ivfflat (embedding vector_cosine_ops)
+--     WITH (lists = 600);
+
+SELECT 1; -- no-op placeholder so migration runner does not error
