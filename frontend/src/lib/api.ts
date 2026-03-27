@@ -299,3 +299,59 @@ export async function payerEditClaim(claimId: string, payload: PayerEditPayload)
     return res.json();
 }
 
+
+// ── TICKET-08: Payer Automation Settings ─────────────────────────────────────
+
+export type CustomRuleType =
+    | 'max_amount'
+    | 'exclude_cpt_prefix'
+    | 'require_min_age'
+    | 'require_max_age';
+
+export interface CustomRule {
+    rule_type: CustomRuleType;
+    label: string;
+    threshold?: number;       // used by max_amount  (INR)
+    code_prefix?: string;     // used by exclude_cpt_prefix
+    min_age?: number;         // used by require_min_age
+    max_age?: number;         // used by require_max_age
+}
+
+export interface PayerSettings {
+    payer_id: string;
+    auto_approve_enabled: boolean;
+    auto_approve_confidence_min: number;
+    auto_approve_max_risk: number;
+    auto_approve_requires_patient_dob: boolean;
+    auto_approve_requires_patient_sex: boolean;
+    auto_approve_payer_responsibility_pct: number;
+    accepted_icd_versions: string[];
+    auto_approve_custom_rules: CustomRule[];
+}
+
+/** GET /api/v1/payers/{payerId}/settings */
+export async function getPayerSettings(payerId: string): Promise<PayerSettings> {
+    const res = await fetch(`${API_BASE}/api/v1/payers/${payerId}/settings`);
+    if (!res.ok) {
+        const err = await res.json().catch(() => ({ detail: 'Unknown error' }));
+        throw new ApiError(res.status, err.detail ?? `HTTP ${res.status}`);
+    }
+    return res.json() as Promise<PayerSettings>;
+}
+
+/** PUT /api/v1/payers/{payerId}/settings */
+export async function updatePayerSettings(
+    payerId: string,
+    payload: Omit<PayerSettings, 'payer_id'>,
+): Promise<PayerSettings> {
+    const res = await fetch(`${API_BASE}/api/v1/payers/${payerId}/settings`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+    });
+    if (!res.ok) {
+        const err = await res.json().catch(() => ({ detail: 'Unknown error' }));
+        throw new ApiError(res.status, err.detail ?? `HTTP ${res.status}`);
+    }
+    return res.json() as Promise<PayerSettings>;
+}

@@ -41,8 +41,8 @@ export default function FhirPanel({ fhir }: Props) {
                 className="w-full flex items-center justify-between px-6 py-4 hover:bg-white/[0.03] transition-colors"
             >
                 <div className="flex items-center gap-3">
-                    <div className="w-6 h-6 rounded bg-indigo-500/20 border border-indigo-500/30 flex items-center justify-center">
-                        <Activity className="w-3 h-3 text-indigo-400" />
+                    <div className="w-6 h-6 rounded bg-amber-500/20 border border-amber-500/30 flex items-center justify-center">
+                        <Activity className="w-3 h-3 text-amber-400" />
                     </div>
                     <div className="text-left">
                         <p className="text-sm font-semibold text-white">Interoperability Export</p>
@@ -50,7 +50,7 @@ export default function FhirPanel({ fhir }: Props) {
                     </div>
                 </div>
                 <div className="flex items-center gap-3">
-                    <span className="text-[10px] font-bold uppercase tracking-widest px-2 py-1 rounded bg-indigo-500/15 border border-indigo-500/25 text-indigo-300">
+                    <span className="text-[10px] font-bold uppercase tracking-widest px-2 py-1 rounded bg-amber-500/15 border border-amber-500/25 text-amber-300">
                         HL7 FHIR R4
                     </span>
                     {open

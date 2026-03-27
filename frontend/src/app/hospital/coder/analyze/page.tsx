@@ -106,7 +106,7 @@ export default function AnalyzePage() {
                     </div>
                     <h1 className="text-3xl sm:text-4xl font-extrabold leading-tight mb-2">
                         Medical Coding{' '}
-                        <span className="bg-gradient-to-r from-indigo-400 to-violet-400 bg-clip-text text-transparent">
+                        <span className="bg-gradient-to-r from-amber-400 to-orange-400 bg-clip-text text-transparent">
                             Integrity Engine
                         </span>
                     </h1>
@@ -120,7 +120,7 @@ export default function AnalyzePage() {
                             { icon: BarChart3, value: '71+', label: 'ICD-10 Codes' },
                         ].map(s => (
                             <div key={s.label} className="flex items-center gap-2">
-                                <s.icon className="w-4 h-4 text-indigo-400" />
+                                <s.icon className="w-4 h-4 text-amber-400" />
                                 <span className="text-sm font-bold text-white">{s.value}</span>
                                 <span className="text-xs text-slate-500">{s.label}</span>
                             </div>
@@ -146,7 +146,7 @@ export default function AnalyzePage() {
                         >
                             <BarChart3 className="w-3.5 h-3.5" />
                             Report
-                            <span className="text-[10px] font-mono bg-indigo-500/20 text-indigo-300 px-1.5 py-0.5 rounded-md ml-1">
+                            <span className="text-[10px] font-mono bg-amber-500/20 text-amber-300 px-1.5 py-0.5 rounded-md ml-1">
                                 {result.final_icd_code}
                             </span>
                         </button>
@@ -155,8 +155,8 @@ export default function AnalyzePage() {
                 
                 {/* Org context badge (read-only, reflects logged-in user) */}
                 {orgUser && (
-                    <div className="flex items-center gap-3 px-3 py-1 bg-indigo-500/5 rounded-lg border border-indigo-500/10">
-                        <span className="text-[10px] font-mono text-indigo-400 uppercase tracking-widest font-bold">Context:</span>
+                    <div className="flex items-center gap-3 px-3 py-1 bg-amber-500/5 rounded-lg border border-amber-500/10">
+                        <span className="text-[10px] font-mono text-amber-400 uppercase tracking-widest font-bold">Context:</span>
                         <span className="text-xs font-medium text-slate-300">🏥 {orgUser.organization_id?.split('-')[0]}</span>
                     </div>
                 )}

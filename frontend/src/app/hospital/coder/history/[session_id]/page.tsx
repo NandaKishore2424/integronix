@@ -46,7 +46,7 @@ export default function CaseDetailPage() {
                     {result && (
                         <>
                             <span className="text-slate-700">·</span>
-                            <span className="font-mono text-indigo-400">{result.final_icd_code}</span>
+                            <span className="font-mono text-amber-400">{result.final_icd_code}</span>
                         </>
                     )}
                 </div>
@@ -57,7 +57,7 @@ export default function CaseDetailPage() {
 
                     {loading && (
                         <div className="flex items-center gap-3 text-sm text-slate-400 py-12 justify-center">
-                            <Loader2 className="w-5 h-5 animate-spin text-indigo-400" />
+                            <Loader2 className="w-5 h-5 animate-spin text-amber-400" />
                             Loading case report…
                         </div>
                     )}

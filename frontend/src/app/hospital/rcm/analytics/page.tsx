@@ -159,7 +159,7 @@ export default function AnalyticsPage() {
                                 value={String(overview.total_cases)}
                                 label="Total Cases"
                                 sub="All time"
-                                color="bg-indigo-500/15 text-indigo-400"
+                                color="bg-amber-500/15 text-amber-400"
                             />
                             <StatCard
                                 icon={TrendingUp}
@@ -175,7 +175,7 @@ export default function AnalyticsPage() {
                                 value={`${overview.avg_confidence}%`}
                                 label="Avg AI Confidence"
                                 sub="Across all codings"
-                                color="bg-violet-500/15 text-violet-400"
+                                color="bg-violet-500/15 text-orange-400"
                             />
                             <StatCard
                                 icon={Shield}

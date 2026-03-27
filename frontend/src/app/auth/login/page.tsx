@@ -22,10 +22,19 @@ export default function LoginPage() {
             if (err) { setError(err.message); return; }
 
             if (data.user) {
-                const { data: userData } = await supabase.from('users').select('*, organizations(name)').eq('auth_id', data.user.id).single();
-                if (userData?.role === 'payer') {
+                const { data: userData } = await supabase
+                    .from('users')
+                    .select('role, organizations(type)')
+                    .eq('auth_id', data.user.id)
+                    .single();
+
+                const orgType = (userData?.organizations as { type?: string } | null)?.type;
+                const role = userData?.role;
+
+                if (orgType === 'insurance_payer') {
+                    // Any role inside a payer org → payer portal
                     router.push('/payer/inbox');
-                } else if (userData?.role === 'rcm') {
+                } else if (role === 'rcm') {
                     router.push('/hospital/rcm/inbox');
                 } else {
                     router.push('/hospital/coder/analyze');
@@ -53,10 +62,18 @@ export default function LoginPage() {
             if (err) { setError('Demo account not configured. Please sign up first.'); return; }
 
             if (data.user) {
-                const { data: userData } = await supabase.from('users').select('*, organizations(name)').eq('auth_id', data.user.id).single();
-                if (userData?.role === 'payer') {
+                const { data: userData } = await supabase
+                    .from('users')
+                    .select('role, organizations(type)')
+                    .eq('auth_id', data.user.id)
+                    .single();
+
+                const orgType = (userData?.organizations as { type?: string } | null)?.type;
+                const role = userData?.role;
+
+                if (orgType === 'insurance_payer') {
                     router.push('/payer/inbox');
-                } else if (userData?.role === 'rcm') {
+                } else if (role === 'rcm') {
                     router.push('/hospital/rcm/inbox');
                 } else {
                     router.push('/hospital/coder/analyze');
@@ -72,10 +89,10 @@ export default function LoginPage() {
             {/* Left panel */}
             <div className="hidden lg:flex w-1/2 bg-gradient-to-br from-indigo-950 via-[#0d1117] to-[#0d1117] flex-col items-center justify-center p-12 border-r border-white/[0.06] relative overflow-hidden">
                 <div className="absolute top-0 left-0 w-full h-full pointer-events-none">
-                    <div className="absolute top-1/4 left-1/2 -translate-x-1/2 w-96 h-96 bg-indigo-600/15 blur-[100px] rounded-full" />
+                    <div className="absolute top-1/4 left-1/2 -translate-x-1/2 w-96 h-96 bg-amber-500/15 blur-[100px] rounded-full" />
                 </div>
                 <div className="relative z-10 max-w-sm text-center">
-                    <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-indigo-500 to-violet-600 flex items-center justify-center mx-auto mb-8 shadow-xl shadow-indigo-900/50">
+                    <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-amber-500 to-orange-600 flex items-center justify-center mx-auto mb-8 shadow-xl shadow-amber-900/50">
                         <BarChart3 className="w-7 h-7 text-white" />
                     </div>
                     <h2 className="text-3xl font-extrabold text-white mb-4">Revenue Integrity Platform</h2>
@@ -83,7 +100,7 @@ export default function LoginPage() {
                     <div className="space-y-3">
                         {['Multi-tenant hospital architecture', 'Sub-2 second AI analysis', 'Full FHIR R4 interoperability', 'Real-time revenue impact'].map(f => (
                             <div key={f} className="flex items-center gap-3 text-sm text-slate-300">
-                                <div className="w-1.5 h-1.5 rounded-full bg-indigo-400 shrink-0" />
+                                <div className="w-1.5 h-1.5 rounded-full bg-amber-400 shrink-0" />
                                 {f}
                             </div>
                         ))}
@@ -95,7 +112,7 @@ export default function LoginPage() {
             <div className="flex-1 flex items-center justify-center p-6">
                 <div className="w-full max-w-md">
                     <div className="lg:hidden flex items-center gap-2 mb-8">
-                        <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-indigo-500 to-violet-600 flex items-center justify-center">
+                        <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-amber-500 to-orange-600 flex items-center justify-center">
                             <BarChart3 className="w-4 h-4 text-white" />
                         </div>
                         <span className="font-bold text-white">Integronix</span>
@@ -161,7 +178,7 @@ export default function LoginPage() {
 
                     <p className="text-center text-sm text-slate-500 mt-8">
                         Don&apos;t have an account?{' '}
-                        <Link href="/auth/signup" className="text-indigo-400 hover:text-indigo-300 font-medium">
+                        <Link href="/auth/signup" className="text-amber-400 hover:text-amber-300 font-medium">
                             Register your organisation
                         </Link>
                     </p>

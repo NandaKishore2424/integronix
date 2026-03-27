@@ -126,7 +126,7 @@ export default function ResultsPanel({ result, onReanalyze, orgId }: Props) {
                 <div className="w-px h-8 bg-white/10 hidden lg:block" />
                 <div className="flex flex-col gap-0.5 sm:flex">
                     <span className="mono-label italic">Multiplier</span>
-                    <span className="text-xs font-mono text-indigo-300 font-bold uppercase">
+                    <span className="text-xs font-mono text-amber-300 font-bold uppercase">
                         {result.financial_summary?.pricing_multiplier ? `${result.financial_summary.pricing_multiplier}x` : '1.0x'}
                     </span>
                 </div>
@@ -169,9 +169,9 @@ export default function ResultsPanel({ result, onReanalyze, orgId }: Props) {
             </div>
 
             {/* ── Claim Submission Bar ── */}
-            <div className="glass-card px-6 py-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-l-2 border-indigo-500">
+            <div className="glass-card px-6 py-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-l-2 border-amber-500">
                 <div className="flex items-center gap-3">
-                    <div className="w-8 h-8 rounded-full bg-indigo-500/10 flex items-center justify-center text-indigo-400">
+                    <div className="w-8 h-8 rounded-full bg-amber-500/10 flex items-center justify-center text-amber-400">
                         <Landmark className="w-4 h-4" />
                     </div>
                     <div>
@@ -191,7 +191,7 @@ export default function ResultsPanel({ result, onReanalyze, orgId }: Props) {
                             <select 
                                 value={selectedPayer}
                                 onChange={(e) => setSelectedPayer(e.target.value)}
-                                className="bg-slate-900 border border-white/10 text-slate-300 text-xs rounded-lg px-3 py-2 outline-none focus:border-indigo-500 transition-colors"
+                                className="bg-slate-900 border border-white/10 text-slate-300 text-xs rounded-lg px-3 py-2 outline-none focus:border-amber-500 transition-colors"
                             >
                                 {payers.map(p => (
                                     <option key={p.id} value={p.id}>{p.name} ({p.payer_type})</option>
@@ -201,7 +201,7 @@ export default function ResultsPanel({ result, onReanalyze, orgId }: Props) {
                             <button
                                 onClick={handleSubmitClaim}
                                 disabled={isSubmitting || !selectedPayer}
-                                className="flex items-center gap-2 bg-indigo-500 hover:bg-indigo-400 text-white text-xs font-bold px-4 py-2 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed shadow-[0_0_15px_rgba(99,102,241,0.3)] shadow-indigo-500"
+                                className="flex items-center gap-2 bg-amber-500 hover:bg-amber-400 text-white text-xs font-bold px-4 py-2 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed shadow-[0_0_15px_rgba(99,102,241,0.3)] shadow-amber-500"
                             >
                                 {isSubmitting ? 'Submitting...' : 'Submit Claim'}
                                 {!isSubmitting && <Send className="w-3.5 h-3.5" />}

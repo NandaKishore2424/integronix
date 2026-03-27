@@ -20,15 +20,15 @@ export default function CptCodeList({ codes }: Props) {
     }
 
     return (
-        <div className="glass-card flex flex-col h-full border-t-2 border-t-indigo-500/50">
+        <div className="glass-card flex flex-col h-full border-t-2 border-t-amber-500/50">
             <div className="px-6 py-4 border-b border-white/10 flex items-center justify-between">
                 <div className="flex items-center gap-2">
-                    <ClipboardCheck className="w-4 h-4 text-indigo-400" />
+                    <ClipboardCheck className="w-4 h-4 text-amber-400" />
                     <h3 className="font-semibold text-sm tracking-tight text-white uppercase italic">
                         Procedural Billing (CPT/HCPCS)
                     </h3>
                 </div>
-                <span className="mono-label text-[10px] bg-indigo-500/20 text-indigo-300 px-2 py-0.5 rounded-full border border-indigo-500/30">
+                <span className="mono-label text-[10px] bg-amber-500/20 text-amber-300 px-2 py-0.5 rounded-full border border-amber-500/30">
                     CMS 2024 MPFS
                 </span>
             </div>
@@ -45,7 +45,7 @@ export default function CptCodeList({ codes }: Props) {
                     <tbody className="divide-y divide-white/[0.05]">
                         {codes.map((c, idx) => (
                             <tr key={`${c.code}-${idx}`} className="group hover:bg-white/[0.03] transition-colors">
-                                <td className="px-6 py-4 font-mono text-sm text-indigo-300 font-bold align-top">
+                                <td className="px-6 py-4 font-mono text-sm text-amber-300 font-bold align-top">
                                     {c.code}
                                 </td>
                                 <td className="px-4 py-4 align-top">
@@ -81,7 +81,7 @@ export default function CptCodeList({ codes }: Props) {
                 </table>
             </div>
             
-            <div className="p-4 bg-indigo-500/5 mt-auto">
+            <div className="p-4 bg-amber-500/5 mt-auto">
                 <p className="text-[10px] text-slate-500 font-mono leading-relaxed">
                     Charges summarized based on Hospital-Specific Chargemaster Multiplier. 
                     Calculated using semantic matching against 

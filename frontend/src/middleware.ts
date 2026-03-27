@@ -38,13 +38,14 @@ export async function middleware(request: NextRequest) {
     if (pathname.startsWith('/auth') && isLoggedIn && session?.user?.id) {
         const { data: userRow } = await supabase
             .from('users')
-            .select('role')
+            .select('role, organizations(type)')
             .eq('auth_id', session.user.id)
             .single();
 
         const role = userRow?.role as string | null;
+        const orgType = (userRow?.organizations as { type?: string } | null)?.type;
 
-        if (role === 'payer') {
+        if (orgType === 'insurance_payer') {
             return NextResponse.redirect(new URL('/payer/inbox', request.url));
         } else if (role === 'rcm') {
             return NextResponse.redirect(new URL('/hospital/rcm/inbox', request.url));
@@ -54,20 +55,31 @@ export async function middleware(request: NextRequest) {
         }
     }
 
-    // ── 3. RBAC: fetch user role from DB and enforce route access ────────────
+    // ── 3. RBAC: fetch user role + org type from DB and enforce route access ──────
     if (isProtectedPath && isLoggedIn && session?.user?.id) {
         const { data: userRow } = await supabase
             .from('users')
-            .select('role')
+            .select('role, organizations(type)')
             .eq('auth_id', session.user.id)
             .single();
 
         const role = userRow?.role as string | null;
+        const orgType = (userRow?.organizations as { type?: string } | null)?.type;
 
         // If no DB user found yet (e.g. in signup flow), let it through
         if (!role) return response;
 
-        // /hospital/coder/* → only coder or admin
+        // Payer org users must never access /hospital/* routes
+        if (pathname.startsWith('/hospital') && orgType === 'insurance_payer') {
+            return NextResponse.redirect(new URL('/payer/inbox', request.url));
+        }
+
+        // Hospital users must never access /payer/* routes
+        if (pathname.startsWith('/payer') && orgType !== 'insurance_payer') {
+            return NextResponse.redirect(new URL('/hospital/coder/analyze', request.url));
+        }
+
+        // /hospital/coder/* → only coder or admin (within a hospital org)
         if (pathname.startsWith('/hospital/coder') && !['coder', 'admin'].includes(role)) {
             return NextResponse.redirect(new URL('/403', request.url));
         }
@@ -82,9 +94,9 @@ export async function middleware(request: NextRequest) {
             return NextResponse.redirect(new URL('/403', request.url));
         }
 
-        // /payer/* → only payer (or admin for ops support)
-        if (pathname.startsWith('/payer') && !['payer', 'admin'].includes(role)) {
-            return NextResponse.redirect(new URL('/403', request.url));
+        // /payer/automation → only admin within a payer org
+        if (pathname.startsWith('/payer/automation') && role !== 'admin') {
+            return NextResponse.redirect(new URL('/payer/inbox', request.url));
         }
     }
 

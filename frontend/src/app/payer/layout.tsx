@@ -3,14 +3,16 @@
 import { useEffect } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
 import Link from 'next/link';
-import { Inbox, CheckSquare, Users, LogOut, ChevronRight, Shield, Building2 } from 'lucide-react';
+import { Inbox, CheckSquare, Users, LogOut, ChevronRight, Shield, Building2, Settings } from 'lucide-react';
 import { useAuth } from '@/components/AuthProvider';
 
 // Payer specific nav items — allowedRoles controls visibility per role
 const navItems = [
-    { href: '/payer/inbox',        icon: Inbox,       name: 'Claim Queue',   allowedRoles: ['payer', 'admin'] },
-    { href: '/payer/admin',        icon: Users,       name: 'Staff',         allowedRoles: ['admin'] },
+    { href: '/payer/inbox',      icon: Inbox,     name: 'Claim Queue',  allowedRoles: ['payer', 'admin'] },
+    { href: '/payer/automation', icon: Settings,  name: 'Automation',   allowedRoles: ['admin'] },
+    { href: '/payer/admin',      icon: Users,     name: 'Staff',        allowedRoles: ['admin'] },
 ];
+
 
 export default function PayerLayout({ children }: { children: React.ReactNode }) {
     const { orgUser, org, loading, signOut } = useAuth();

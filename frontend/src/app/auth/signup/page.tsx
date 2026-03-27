@@ -71,13 +71,13 @@ export default function SignupPage() {
     return (
         <div className="min-h-screen flex items-center justify-center p-6">
             <div className="absolute inset-0 pointer-events-none">
-                <div className="absolute top-1/3 left-1/2 -translate-x-1/2 w-[600px] h-[400px] bg-indigo-600/8 blur-[120px] rounded-full" />
+                <div className="absolute top-1/3 left-1/2 -translate-x-1/2 w-[600px] h-[400px] bg-amber-500/8 blur-[120px] rounded-full" />
             </div>
 
             <div className="relative w-full max-w-md">
                 {/* Logo */}
                 <Link href="/" className="flex items-center gap-2 mb-8 justify-center">
-                    <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-indigo-500 to-violet-600 flex items-center justify-center">
+                    <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-amber-400 to-orange-600 flex items-center justify-center">
                         <BarChart3 className="w-5 h-5 text-white" />
                     </div>
                     <span className="text-lg font-bold text-white">Integronix</span>
@@ -87,10 +87,10 @@ export default function SignupPage() {
                 <div className="flex items-center gap-2 mb-6 justify-center">
                     {[1, 2].map(s => (
                         <div key={s} className="flex items-center gap-2">
-                            <div className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold transition-all ${step >= s ? 'bg-indigo-600 text-white' : 'bg-white/[0.08] text-slate-500'}`}>
+                            <div className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold transition-all ${step >= s ? 'bg-amber-500 text-white' : 'bg-white/[0.08] text-slate-500'}`}>
                                 {s}
                             </div>
-                            {s < 2 && <div className={`w-12 h-0.5 transition-all ${step > s ? 'bg-indigo-600' : 'bg-white/[0.08]'}`} />}
+                            {s < 2 && <div className={`w-12 h-0.5 transition-all ${step > s ? 'bg-amber-500' : 'bg-white/[0.08]'}`} />}
                         </div>
                     ))}
                 </div>
@@ -99,8 +99,8 @@ export default function SignupPage() {
                     {step === 1 ? (
                         <>
                             <div className="flex items-center gap-3 mb-6">
-                                <div className="w-9 h-9 rounded-lg bg-indigo-500/20 flex items-center justify-center">
-                                    <Building2 className="w-5 h-5 text-indigo-400" />
+                                <div className="w-9 h-9 rounded-lg bg-amber-500/15 flex items-center justify-center">
+                                    <Building2 className="w-5 h-5 text-amber-400" />
                                 </div>
                                 <div>
                                     <h1 className="text-lg font-bold text-white">Organisation Details</h1>
@@ -133,6 +133,7 @@ export default function SignupPage() {
                                         <option value="clinic">Clinic / Outpatient Centre</option>
                                         <option value="rcm_vendor">RCM Vendor</option>
                                         <option value="diagnostic_center">Diagnostic Centre</option>
+                                        <option value="insurance_payer">Insurance / Payer</option>
                                     </select>
                                 </div>
 
@@ -166,8 +167,8 @@ export default function SignupPage() {
                     ) : (
                         <form onSubmit={handleSignup}>
                             <div className="flex items-center gap-3 mb-6">
-                                <div className="w-9 h-9 rounded-lg bg-indigo-500/20 flex items-center justify-center">
-                                    <User className="w-5 h-5 text-indigo-400" />
+                                <div className="w-9 h-9 rounded-lg bg-amber-500/15 flex items-center justify-center">
+                                    <User className="w-5 h-5 text-amber-400" />
                                 </div>
                                 <div>
                                     <h1 className="text-lg font-bold text-white">Admin Account</h1>
@@ -238,7 +239,7 @@ export default function SignupPage() {
 
                 <p className="text-center text-sm text-slate-500 mt-6">
                     Already have an account?{' '}
-                    <Link href="/auth/login" className="text-indigo-400 hover:text-indigo-300 font-medium">Sign In</Link>
+                    <Link href="/auth/login" className="text-amber-400 hover:text-amber-300 font-medium">Sign In</Link>
                 </p>
             </div>
         </div>
