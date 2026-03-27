@@ -1,6 +1,7 @@
 'use client';
 
 import { IcdCode } from '@/types/coding';
+import { formatCurrency } from '@/lib/api';
 import { Award, Star, Plus } from 'lucide-react';
 
 interface Props { codes: IcdCode[] }
@@ -73,7 +74,7 @@ export default function MultiCodeList({ codes }: Props) {
                                 {/* Score + reimbursement */}
                                 <div className="text-right shrink-0">
                                     <p className="text-lg font-bold text-white">{pct}%</p>
-                                    <p className="text-xs text-slate-500">${c.base_reimbursement.toLocaleString()}</p>
+                                    <p className="text-xs text-slate-500">{formatCurrency(c.base_reimbursement)}</p>
                                 </div>
                             </div>
 
@@ -106,7 +107,7 @@ export default function MultiCodeList({ codes }: Props) {
                 </div>
                 <div className="text-right">
                     <span className="text-sm font-bold text-success">
-                        ${(codes.find(c => c.role === 'primary')?.base_reimbursement ?? 0).toLocaleString()}
+                        {formatCurrency(codes.find(c => c.role === 'primary')?.base_reimbursement ?? 0)}
                     </span>
                     {codes.length > 1 && (
                         <p className="text-[10px] text-slate-600 mt-0.5">

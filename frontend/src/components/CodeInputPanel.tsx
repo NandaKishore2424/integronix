@@ -113,7 +113,7 @@ export default function CodeInputPanel({ onSubmit, onSubmitPdf, loading, stageLa
                             disabled={loading}
                             className={`flex items-center gap-2 px-4 py-1.5 rounded-lg text-sm font-semibold transition-all duration-150 ${
                                 mode === m
-                                    ? 'bg-indigo-600 text-white shadow-sm'
+                                    ? 'bg-amber-500 text-white shadow-sm'
                                     : 'text-slate-400 hover:text-slate-200'
                             }`}
                         >
@@ -131,7 +131,7 @@ export default function CodeInputPanel({ onSubmit, onSubmitPdf, loading, stageLa
                         <div>
                             <div className="flex items-center justify-between mb-2">
                                 <label className="flex items-center gap-2 text-sm font-semibold text-slate-200">
-                                    <FileText className="w-4 h-4 text-indigo-400" />
+                                    <FileText className="w-4 h-4 text-amber-400" />
                                     Clinical Documentation
                                 </label>
                                 <span className={`text-xs font-mono ${charCount >= 20 ? 'text-slate-500' : 'text-amber-400'}`}>
@@ -153,7 +153,7 @@ export default function CodeInputPanel({ onSubmit, onSubmitPdf, loading, stageLa
                     {mode === 'pdf' && (
                         <div>
                             <label className="flex items-center gap-2 text-sm font-semibold text-slate-200 mb-2">
-                                <ScanText className="w-4 h-4 text-indigo-400" />
+                                <ScanText className="w-4 h-4 text-amber-400" />
                                 Discharge Summary PDF
                                 <span className="text-xs font-normal text-slate-500 ml-1">Max 20 MB · Digital or scanned</span>
                             </label>
@@ -167,20 +167,20 @@ export default function CodeInputPanel({ onSubmit, onSubmitPdf, loading, stageLa
                                     onClick={() => fileInputRef.current?.click()}
                                     className={`flex flex-col items-center justify-center gap-3 rounded-xl border-2 border-dashed cursor-pointer transition-all duration-200 min-h-[180px]
                                         ${isDragging
-                                            ? 'border-indigo-500 bg-indigo-500/10'
-                                            : 'border-white/[0.12] hover:border-indigo-500/50 hover:bg-white/[0.03]'
+                                            ? 'border-amber-500 bg-amber-500/10'
+                                            : 'border-white/[0.12] hover:border-amber-500/50 hover:bg-white/[0.03]'
                                         }`}
                                 >
                                     <div className={`w-12 h-12 rounded-xl flex items-center justify-center transition-colors duration-200
-                                        ${isDragging ? 'bg-indigo-500/20' : 'bg-white/[0.06]'}`}>
-                                        <Upload className={`w-6 h-6 ${isDragging ? 'text-indigo-400' : 'text-slate-500'}`} />
+                                        ${isDragging ? 'bg-amber-500/20' : 'bg-white/[0.06]'}`}>
+                                        <Upload className={`w-6 h-6 ${isDragging ? 'text-amber-400' : 'text-slate-500'}`} />
                                     </div>
                                     <div className="text-center">
                                         <p className="text-sm font-semibold text-slate-300">
                                             {isDragging ? 'Drop it here' : 'Drop discharge summary PDF'}
                                         </p>
                                         <p className="text-xs text-slate-500 mt-1">
-                                            or <span className="text-indigo-400 underline underline-offset-2">click to browse</span>
+                                            or <span className="text-amber-400 underline underline-offset-2">click to browse</span>
                                         </p>
                                     </div>
                                     <p className="text-[11px] text-slate-600">
@@ -260,8 +260,8 @@ export default function CodeInputPanel({ onSubmit, onSubmitPdf, loading, stageLa
                     <div className="flex items-center justify-between pt-1">
                         {loading ? (
                             <div className="flex items-center gap-3 text-sm text-slate-400 animate-fade-in">
-                                <Loader2 className="w-4 h-4 animate-spin text-indigo-400" />
-                                <span className="text-indigo-400 font-medium">{stageLabel}</span>
+                                <Loader2 className="w-4 h-4 animate-spin text-amber-400" />
+                                <span className="text-amber-400 font-medium">{stageLabel}</span>
                             </div>
                         ) : (
                             <span className="text-xs text-slate-600">
@@ -298,9 +298,9 @@ export default function CodeInputPanel({ onSubmit, onSubmitPdf, loading, stageLa
                                 key={s.label}
                                 onClick={() => loadSample(s)}
                                 disabled={loading}
-                                className="text-left p-3 rounded-lg border border-white/[0.06] hover:border-indigo-500/30 hover:bg-white/[0.04] transition-all duration-150 group"
+                                className="text-left p-3 rounded-lg border border-white/[0.06] hover:border-amber-500/30 hover:bg-white/[0.04] transition-all duration-150 group"
                             >
-                                <p className="text-sm font-semibold text-slate-200 group-hover:text-indigo-300 transition-colors">
+                                <p className="text-sm font-semibold text-slate-200 group-hover:text-amber-300 transition-colors">
                                     {s.label}
                                 </p>
                                 <p className="text-xs text-slate-500 mt-0.5 line-clamp-2">{s.text}</p>
@@ -327,9 +327,10 @@ export default function CodeInputPanel({ onSubmit, onSubmitPdf, loading, stageLa
                             ['6', 'Code Selection', 'Rule-based specificity engine'],
                             ['7', 'Compliance Audit', 'Revenue gap detection'],
                             ['8', 'Risk Assessment', 'Audit probability scoring'],
+                            ['9', 'Payer Adjudication', 'Automated claim routing'],
                         ].map(([n, name, desc]) => (
                             <li key={n} className="flex items-start gap-2.5">
-                                <span className="shrink-0 w-5 h-5 rounded-full bg-indigo-500/15 border border-indigo-500/30 flex items-center justify-center text-[10px] font-bold text-indigo-300">
+                                <span className="shrink-0 w-5 h-5 rounded-full bg-amber-500/15 border border-amber-500/30 flex items-center justify-center text-[10px] font-bold text-amber-300">
                                     {n}
                                 </span>
                                 <div>

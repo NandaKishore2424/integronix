@@ -59,13 +59,19 @@ export default function RiskMeter({ score, label, confidence }: Props) {
 
             {/* Stats row */}
             <div className="w-full grid grid-cols-2 gap-3 pt-2 border-t border-white/[0.06]">
-                <div className="flex flex-col items-center gap-1">
-                    <span className="mono-label">Risk Score</span>
+                <div className="flex flex-col items-center gap-1 group relative">
+                    <span className="mono-label cursor-help border-b border-dashed border-slate-600">Risk Score</span>
                     <span className={`text-lg font-bold ${cfg.text}`}>{pct}%</span>
+                    <div className="invisible group-hover:visible opacity-0 group-hover:opacity-100 transition-opacity absolute bottom-full mb-2 w-48 p-2 bg-slate-800 text-[10px] leading-snug text-slate-300 rounded shadow-lg z-10 border border-slate-700 text-center pointer-events-none">
+                        Probability of payer denial or audit based on historical data.
+                    </div>
                 </div>
-                <div className="flex flex-col items-center gap-1">
-                    <span className="mono-label">AI Confidence</span>
+                <div className="flex flex-col items-center gap-1 group relative">
+                    <span className="mono-label cursor-help border-b border-dashed border-slate-600">AI Confidence</span>
                     <span className="text-lg font-bold text-white">{confPct}%</span>
+                    <div className="invisible group-hover:visible opacity-0 group-hover:opacity-100 transition-opacity absolute bottom-full mb-2 w-48 p-2 bg-slate-800 text-[10px] leading-snug text-slate-300 rounded shadow-lg z-10 border border-slate-700 text-center pointer-events-none">
+                        AI certainty of clinical to ICD-10 crosswalk match.
+                    </div>
                 </div>
             </div>
 

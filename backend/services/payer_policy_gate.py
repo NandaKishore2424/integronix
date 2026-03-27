@@ -83,7 +83,92 @@ def _add_reason(reasons: list[dict], code: str, message: str, severity: str) -> 
     reasons.append({"code": code, "message": message, "severity": severity})
 
 
+def _evaluate_custom_rules(
+    *,
+    reasons: list[dict],
+    custom_rules: list[dict],
+    claim_data: dict,
+    patient_dob_dt,
+) -> None:
+    """
+    Evaluate each payer-defined custom rule against the claim.
+    Any failing rule adds a HIGH severity reason, causing the gate to flag the claim
+    for manual review regardless of the AI scores.
+    """
+    total_billed = float(claim_data.get("total_billed_amount") or 0.0)
+    cpt_codes: list[Any] = claim_data.get("cpt_codes") or []
+
+    for rule in custom_rules:
+        rule_type = (rule.get("rule_type") or "").strip()
+        label = rule.get("label") or rule_type
+
+        if rule_type == "max_amount":
+            threshold = rule.get("threshold")
+            if threshold is not None and total_billed > float(threshold):
+                _add_reason(
+                    reasons,
+                    code="CUSTOM_MAX_AMOUNT",
+                    message=(
+                        f"Custom rule '{label}': billed amount ₹{total_billed:,.2f} exceeds "
+                        f"auto-approve cap of ₹{float(threshold):,.2f}. Manual review required."
+                    ),
+                    severity="HIGH",
+                )
+
+        elif rule_type == "exclude_cpt_prefix":
+            prefix = (rule.get("code_prefix") or "").strip()
+            if prefix:
+                matched = [
+                    c.get("cpt_code", "") for c in cpt_codes
+                    if isinstance(c, dict) and c.get("cpt_code", "").startswith(prefix)
+                ]
+                if matched:
+                    _add_reason(
+                        reasons,
+                        code="CUSTOM_EXCLUDED_CPT",
+                        message=(
+                            f"Custom rule '{label}': CPT code(s) {matched} match blocked "
+                            f"prefix '{prefix}'. Manual review required."
+                        ),
+                        severity="HIGH",
+                    )
+
+        elif rule_type == "require_min_age":
+            min_age = rule.get("min_age")
+            if min_age is not None and patient_dob_dt:
+                age = (datetime.utcnow() - patient_dob_dt).days // 365
+                if age < int(min_age):
+                    _add_reason(
+                        reasons,
+                        code="CUSTOM_AGE_TOO_LOW",
+                        message=(
+                            f"Custom rule '{label}': patient age ({age} yrs) is below "
+                            f"minimum {min_age} yrs for auto-approve."
+                        ),
+                        severity="HIGH",
+                    )
+
+        elif rule_type == "require_max_age":
+            max_age = rule.get("max_age")
+            if max_age is not None and patient_dob_dt:
+                age = (datetime.utcnow() - patient_dob_dt).days // 365
+                if age > int(max_age):
+                    _add_reason(
+                        reasons,
+                        code="CUSTOM_AGE_TOO_HIGH",
+                        message=(
+                            f"Custom rule '{label}': patient age ({age} yrs) exceeds "
+                            f"maximum {max_age} yrs for auto-approve."
+                        ),
+                        severity="HIGH",
+                    )
+
+        else:
+            log.warning("unknown_custom_rule_type", rule_type=rule_type, label=label)
+
+
 def run_payer_policy_gate(
+
     *,
     claim_data: dict,
     payer_policy: dict,
@@ -240,7 +325,18 @@ def run_payer_policy_gate(
             severity="HIGH",
         )
 
+    # --- Custom payer-defined rules ---
+    custom_rules = payer_policy.get("auto_approve_custom_rules") or []
+    if isinstance(custom_rules, list) and custom_rules:
+        _evaluate_custom_rules(
+            reasons=reasons,
+            custom_rules=custom_rules,
+            claim_data=claim_data,
+            patient_dob_dt=patient_dob_dt,
+        )
+
     gate_status = "PASS" if not reasons else "NEEDS_REVIEW"
+
 
     should_auto_approve = auto_enabled and gate_status == "PASS"
 

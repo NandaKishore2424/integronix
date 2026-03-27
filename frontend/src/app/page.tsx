@@ -10,7 +10,7 @@ export default function LandingPage() {
       <nav className="fixed top-0 w-full z-50 border-b border-white/[0.06] bg-[#0d1117]/80 backdrop-blur-xl">
         <div className="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-indigo-500 to-violet-600 flex items-center justify-center">
+            <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-amber-500 to-orange-600 flex items-center justify-center">
               <BarChart3 className="w-4 h-4 text-white" />
             </div>
             <span className="text-lg font-bold text-white tracking-tight">Integronix</span>
@@ -30,16 +30,16 @@ export default function LandingPage() {
       {/* ── Hero ── */}
       <section className="pt-40 pb-24 px-6 text-center relative overflow-hidden">
         <div className="absolute inset-0 pointer-events-none">
-          <div className="absolute top-20 left-1/2 -translate-x-1/2 w-[700px] h-[400px] bg-indigo-600/10 blur-[120px] rounded-full" />
+          <div className="absolute top-20 left-1/2 -translate-x-1/2 w-[700px] h-[400px] bg-amber-500/10 blur-[120px] rounded-full" />
         </div>
         <div className="relative max-w-4xl mx-auto">
-          <div className="inline-flex items-center gap-2 text-xs font-semibold text-indigo-400 bg-indigo-500/10 border border-indigo-500/20 rounded-full px-4 py-1.5 mb-6">
-            <span className="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-pulse" />
+          <div className="inline-flex items-center gap-2 text-xs font-semibold text-amber-400 bg-amber-500/10 border border-amber-500/20 rounded-full px-4 py-1.5 mb-6">
+            <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
             HIPAA-Ready · HL7 FHIR R4 · SOC 2 Type II
           </div>
           <h1 className="text-5xl sm:text-6xl font-extrabold leading-[1.08] mb-6 tracking-tight">
             Stop Losing Revenue to{' '}
-            <span className="bg-gradient-to-r from-indigo-400 via-violet-400 to-purple-400 bg-clip-text text-transparent">
+            <span className="bg-gradient-to-r from-amber-400 via-orange-400 to-orange-500 bg-clip-text text-transparent">
               Coding Errors
             </span>
           </h1>
@@ -109,8 +109,8 @@ export default function LandingPage() {
             ].map(s => (
               <div key={s.step} className="glass-card p-6 relative">
                 <div className="text-5xl font-extrabold text-white/[0.06] absolute top-4 right-5 font-mono">{s.step}</div>
-                <div className="w-8 h-8 rounded-lg bg-indigo-500/20 border border-indigo-500/30 flex items-center justify-center mb-4">
-                  <span className="text-xs font-bold text-indigo-400">{s.step}</span>
+                <div className="w-8 h-8 rounded-lg bg-amber-500/20 border border-amber-500/30 flex items-center justify-center mb-4">
+                  <span className="text-xs font-bold text-amber-400">{s.step}</span>
                 </div>
                 <h3 className="font-semibold text-white mb-2">{s.title}</h3>
                 <p className="text-sm text-slate-400 leading-relaxed">{s.desc}</p>
@@ -136,10 +136,10 @@ export default function LandingPage() {
               { icon: TrendingUp, title: 'Revenue Impact Analysis', desc: 'See the exact dollar difference between your submitted code and the AI recommendation per claim.' },
               { icon: Globe, title: 'Full Audit Trail', desc: 'Every pipeline decision logged. Every node, every LLM call, every fallback — permanently traceable.' },
             ].map(f => (
-              <div key={f.title} className="glass-card p-5 group hover:border-indigo-500/30 transition-all duration-200">
+              <div key={f.title} className="glass-card p-5 group hover:border-amber-500/30 transition-all duration-200">
                 <div className="flex items-start gap-4">
-                  <div className="w-9 h-9 rounded-lg bg-indigo-500/15 flex items-center justify-center shrink-0 group-hover:bg-indigo-500/25 transition-colors">
-                    <f.icon className="w-4.5 h-4.5 text-indigo-400" style={{ width: '18px', height: '18px' }} />
+                  <div className="w-9 h-9 rounded-lg bg-amber-500/15 flex items-center justify-center shrink-0 group-hover:bg-amber-500/25 transition-colors">
+                    <f.icon className="w-4.5 h-4.5 text-amber-400" style={{ width: '18px', height: '18px' }} />
                   </div>
                   <div>
                     <h3 className="font-semibold text-white text-sm mb-1">{f.title}</h3>
@@ -167,7 +167,7 @@ export default function LandingPage() {
       <footer className="border-t border-white/[0.06] py-8 px-6">
         <div className="max-w-6xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-4">
           <div className="flex items-center gap-2">
-            <div className="w-6 h-6 rounded bg-gradient-to-br from-indigo-500 to-violet-600 flex items-center justify-center">
+            <div className="w-6 h-6 rounded bg-gradient-to-br from-amber-500 to-orange-600 flex items-center justify-center">
               <BarChart3 className="w-3 h-3 text-white" />
             </div>
             <span className="text-sm font-semibold text-white">Integronix</span>

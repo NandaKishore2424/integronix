@@ -2,6 +2,7 @@
 
 import { CodeResponse, MappingPath } from '@/types/coding';
 import DrgBadge from './DrgBadge';
+import { formatCurrency } from '@/lib/api';
 import { CheckCircle2, ArrowRight, TrendingUp } from 'lucide-react';
 
 interface Props { result: CodeResponse }
@@ -90,7 +91,7 @@ export default function IcdCodeCard({ result }: Props) {
                     {primary.base_reimbursement > 0 && (
                         <span className="flex items-center gap-1 text-xs px-2.5 py-1 rounded-full border bg-success/10 border-success/25 text-success font-semibold">
                             <TrendingUp className="w-3 h-3" />
-                            ${primary.base_reimbursement.toLocaleString()} estimated reimbursement
+                            {formatCurrency(primary.base_reimbursement)} estimated reimbursement
                         </span>
                     )}
                 </div>

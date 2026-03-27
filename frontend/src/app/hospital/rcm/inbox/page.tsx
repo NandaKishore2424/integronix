@@ -10,7 +10,7 @@ const STATUS_CONFIG: Record<string, { color: string; icon: any; label: string }>
     SUBMITTED: { color: 'text-auth-primary bg-auth-primary/10 border-auth-primary/20', icon: Activity, label: 'Submitted' },
     ADJUDICATING: { color: 'text-warning bg-warning/10 border-warning/20', icon: Clock, label: 'Adjudicating' },
     PAID: { color: 'text-success bg-success/10 border-success/20', icon: CheckCircle2, label: 'Paid in Full' },
-    PARTIALLY_PAID: { color: 'text-indigo-400 bg-indigo-400/10 border-indigo-400/20', icon: CheckCircle2, label: 'Partially Paid' },
+    PARTIALLY_PAID: { color: 'text-amber-400 bg-amber-400/10 border-amber-400/20', icon: CheckCircle2, label: 'Partially Paid' },
     DENIED: { color: 'text-danger bg-danger/10 border-danger/20', icon: AlertTriangle, label: 'Denied' },
     APPEALED: { color: 'text-orange-400 bg-orange-400/10 border-orange-400/20', icon: AlertTriangle, label: 'Appealed' },
 };
@@ -126,6 +126,12 @@ export default function ClaimsInboxPage() {
                                         {claims.map((claim) => {
                                             const config = STATUS_CONFIG[claim.status] || STATUS_CONFIG.DRAFT;
                                             const Icon = config.icon;
+                                            const allowed = claim.total_allowed_amount || 0;
+                                            const paid = claim.total_paid_amount || 0;
+                                            const resp = claim.patient_responsibility || 0;
+                                            const paidPct = allowed > 0 ? Math.round((paid / allowed) * 100) : 0;
+                                            const respPct = allowed > 0 ? Math.round((resp / allowed) * 100) : 0;
+                                            
                                             return (
                                                 <tr key={claim.id} className="hover:bg-white/[0.02] transition-colors group">
                                                     <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-300">
@@ -144,11 +150,21 @@ export default function ClaimsInboxPage() {
                                                     <td className="px-6 py-4 whitespace-nowrap text-sm font-mono text-right text-slate-400">
                                                         {claim.total_allowed_amount > 0 ? formatCurrency(claim.total_allowed_amount) : '—'}
                                                     </td>
-                                                    <td className="px-6 py-4 whitespace-nowrap text-sm font-mono text-right font-bold text-success">
-                                                        {claim.total_paid_amount > 0 ? formatCurrency(claim.total_paid_amount) : '—'}
+                                                    <td className="px-6 py-4 whitespace-nowrap text-right">
+                                                        <div className="text-sm font-mono font-bold text-success">
+                                                            {claim.total_paid_amount > 0 ? formatCurrency(claim.total_paid_amount) : '—'}
+                                                        </div>
+                                                        {claim.total_paid_amount > 0 && allowed > 0 && (
+                                                            <div className="text-[10px] text-success/70 font-mono mt-0.5">{paidPct}%</div>
+                                                        )}
                                                     </td>
-                                                    <td className="px-6 py-4 whitespace-nowrap text-sm font-mono text-right text-warning">
-                                                        {claim.patient_responsibility > 0 ? formatCurrency(claim.patient_responsibility) : '—'}
+                                                    <td className="px-6 py-4 whitespace-nowrap text-right">
+                                                        <div className="text-sm font-mono text-warning">
+                                                            {claim.patient_responsibility > 0 ? formatCurrency(claim.patient_responsibility) : '—'}
+                                                        </div>
+                                                        {claim.patient_responsibility > 0 && allowed > 0 && (
+                                                            <div className="text-[10px] text-warning/70 font-mono mt-0.5">{respPct}%</div>
+                                                        )}
                                                     </td>
                                                     <td className="px-6 py-4 whitespace-nowrap">
                                                         <div className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md border text-[10px] font-bold uppercase tracking-wider ${config.color}`}>
@@ -159,29 +175,40 @@ export default function ClaimsInboxPage() {
                                                     <td className="px-6 py-4 whitespace-nowrap text-right">
                                                         <div className="flex items-center justify-end gap-2">
                                                             {/* EDI 837: visible for all claims */}
-                                                            <a
-                                                                href={exportEdiUrl(claim.id)}
-                                                                target="_blank"
-                                                                className="p-1.5 text-slate-400 hover:text-white bg-white/5 hover:bg-white/10 rounded-lg transition-colors"
-                                                                title="Export EDI 837 Claim"
-                                                            >
-                                                                <Download className="w-4 h-4" />
-                                                            </a>
-                                                            {/* EDI 835: visible only after adjudication */}
-                                                            {['PAID', 'PARTIALLY_PAID', 'DENIED'].includes(claim.status) && (
+                                                            <div className="relative group">
                                                                 <a
-                                                                    href={exportEdi835Url(claim.id)}
+                                                                    href={exportEdiUrl(claim.id)}
                                                                     target="_blank"
-                                                                    className="p-1.5 text-indigo-400 hover:text-indigo-300 bg-indigo-500/5 hover:bg-indigo-500/15 rounded-lg transition-colors border border-indigo-500/20"
-                                                                    title="Download Remittance Advice (EDI 835)"
+                                                                    className="p-1.5 flex text-slate-400 hover:text-white bg-white/5 hover:bg-white/10 rounded-lg transition-colors"
                                                                 >
                                                                     <Download className="w-4 h-4" />
                                                                 </a>
+                                                                <div className="invisible group-hover:visible opacity-0 group-hover:opacity-100 transition-opacity absolute bottom-full right-0 mb-2 w-56 p-2.5 bg-slate-800 text-[10px] leading-relaxed text-slate-300 rounded shadow-xl z-10 border border-slate-700 pointer-events-none">
+                                                                    <strong className="text-white text-xs block mb-1">Export EDI 837</strong>
+                                                                    Raw ANSI X12 text file used for machine-to-machine HIPAA claim submission. <span className="text-amber-400 font-medium">This is raw data, not a visual PDF form.</span>
+                                                                </div>
+                                                            </div>
+
+                                                            {/* EDI 835: visible only after adjudication */}
+                                                            {['PAID', 'PARTIALLY_PAID', 'DENIED'].includes(claim.status) && (
+                                                                <div className="relative group">
+                                                                    <a
+                                                                        href={exportEdi835Url(claim.id)}
+                                                                        target="_blank"
+                                                                        className="p-1.5 flex text-amber-400 hover:text-amber-300 bg-amber-500/5 hover:bg-amber-500/15 rounded-lg transition-colors border border-amber-500/20"
+                                                                    >
+                                                                        <Download className="w-4 h-4" />
+                                                                    </a>
+                                                                    <div className="invisible group-hover:visible opacity-0 group-hover:opacity-100 transition-opacity absolute bottom-full right-0 mb-2 w-56 p-2.5 bg-slate-800 text-[10px] leading-relaxed text-slate-300 rounded shadow-xl z-10 border border-slate-700 pointer-events-none">
+                                                                        <strong className="text-white text-xs block mb-1">Export EDI 835</strong>
+                                                                        Raw ANSI X12 text file for Electronic Remittance Advice (ERA) from the payer. <span className="text-amber-400 font-medium">This is raw data, not a visual PDF form.</span>
+                                                                    </div>
+                                                                </div>
                                                             )}
                                                             {(claim.status === 'DENIED' || claim.status === 'PARTIALLY_PAID') && (
                                                                 <button 
                                                                     onClick={() => setAppealingClaim(claim)}
-                                                                    className="px-3 py-1.5 text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-500 rounded-lg transition-colors"
+                                                                    className="px-3 py-1.5 text-xs font-bold text-white bg-amber-500 hover:bg-amber-500 rounded-lg transition-colors"
                                                                 >
                                                                     Appeal
                                                                 </button>
@@ -212,7 +239,7 @@ export default function ClaimsInboxPage() {
                             value={justification}
                             onChange={e => setJustification(e.target.value)}
                             placeholder="E.g., The CPT code 58150 was entered correctly per the attached operative report..."
-                            className="w-full h-32 bg-slate-900/50 border border-white/10 rounded-xl p-3 text-sm text-slate-200 placeholder:text-slate-600 focus:outline-none focus:border-indigo-500 mb-4 resize-none"
+                            className="w-full h-32 bg-slate-900/50 border border-white/10 rounded-xl p-3 text-sm text-slate-200 placeholder:text-slate-600 focus:outline-none focus:border-amber-500 mb-4 resize-none"
                         />
                         <div className="flex items-center justify-end gap-3">
                             <button 
@@ -224,7 +251,7 @@ export default function ClaimsInboxPage() {
                             <button 
                                 onClick={handleAppeal}
                                 disabled={appealLoading || !justification.trim()}
-                                className="px-4 py-2 text-sm font-semibold text-white bg-indigo-600 hover:bg-indigo-500 rounded-xl transition-colors disabled:opacity-50"
+                                className="px-4 py-2 text-sm font-semibold text-white bg-amber-500 hover:bg-amber-500 rounded-xl transition-colors disabled:opacity-50"
                             >
                                 {appealLoading ? 'Submitting...' : 'Submit Appeal'}
                             </button>

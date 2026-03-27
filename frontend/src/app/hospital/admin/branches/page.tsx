@@ -77,12 +77,12 @@ export default function BranchesPage() {
             <div className="px-8 py-6">
                 {loading ? (
                     <div className="flex justify-center py-16">
-                        <Loader2 className="w-6 h-6 animate-spin text-indigo-400" />
+                        <Loader2 className="w-6 h-6 animate-spin text-amber-400" />
                     </div>
                 ) : branches.length === 0 ? (
                     <div className="text-center py-16">
-                        <div className="w-14 h-14 rounded-2xl bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center mx-auto mb-4">
-                            <Building2 className="w-7 h-7 text-indigo-400" />
+                        <div className="w-14 h-14 rounded-2xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center mx-auto mb-4">
+                            <Building2 className="w-7 h-7 text-amber-400" />
                         </div>
                         <h3 className="font-semibold text-white mb-1">No branches yet</h3>
                         <p className="text-sm text-slate-400 mb-5">Add your first branch to start assigning users and cases.</p>
@@ -95,8 +95,8 @@ export default function BranchesPage() {
                         {branches.map(b => (
                             <div key={b.id} className="glass-card p-5">
                                 <div className="flex items-start gap-3">
-                                    <div className="w-9 h-9 rounded-lg bg-indigo-500/15 border border-indigo-500/20 flex items-center justify-center shrink-0">
-                                        <GitBranch className="w-4 h-4 text-indigo-400" />
+                                    <div className="w-9 h-9 rounded-lg bg-amber-500/15 border border-amber-500/20 flex items-center justify-center shrink-0">
+                                        <GitBranch className="w-4 h-4 text-amber-400" />
                                     </div>
                                     <div className="min-w-0">
                                         <h3 className="font-semibold text-white text-sm truncate">{b.name}</h3>

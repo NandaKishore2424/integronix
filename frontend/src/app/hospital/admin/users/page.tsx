@@ -102,7 +102,7 @@ export default function UsersPage() {
 
             <div className="px-8 py-6">
                 {loading ? (
-                    <div className="flex justify-center py-16"><Loader2 className="w-6 h-6 animate-spin text-indigo-400" /></div>
+                    <div className="flex justify-center py-16"><Loader2 className="w-6 h-6 animate-spin text-amber-400" /></div>
                 ) : (
                     <div className="glass-card overflow-hidden">
                         <table className="w-full text-sm">
@@ -120,7 +120,7 @@ export default function UsersPage() {
                                         <tr key={u.id} className={`border-b border-white/[0.04] hover:bg-white/[0.02] transition-colors ${i === users.length - 1 ? 'border-none' : ''}`}>
                                             <td className="px-5 py-3.5">
                                                 <div className="flex items-center gap-3">
-                                                    <div className="w-7 h-7 rounded-full bg-gradient-to-br from-indigo-500 to-violet-600 flex items-center justify-center text-white text-xs font-bold shrink-0">
+                                                    <div className="w-7 h-7 rounded-full bg-gradient-to-br from-amber-500 to-orange-600 flex items-center justify-center text-white text-xs font-bold shrink-0">
                                                         {u.full_name.charAt(0).toUpperCase()}
                                                     </div>
                                                     <span className="font-medium text-white text-sm">{u.full_name}</span>
@@ -149,65 +149,104 @@ export default function UsersPage() {
 
             {/* Add User Modal */}
             {showModal && (
-                <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
-                    <div className="glass-card w-full max-w-md p-6 animate-slide-up max-h-[90vh] overflow-y-auto">
-                        <div className="flex items-center justify-between mb-5">
-                            <h2 className="font-bold text-white text-lg">Add User</h2>
-                            <button onClick={() => { setShowModal(false); setError(''); }} className="text-slate-500 hover:text-white"><X className="w-5 h-5" /></button>
+                <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm">
+                    <div className="w-full max-w-md rounded-2xl bg-slate-900 border border-white/10 shadow-2xl animate-slide-up max-h-[90vh] overflow-y-auto">
+                        {/* Modal Header */}
+                        <div className="flex items-center justify-between px-6 pt-6 pb-4 border-b border-white/[0.07]">
+                            <div>
+                                <h2 className="font-bold text-white text-lg">Add Team Member</h2>
+                                <p className="text-xs text-slate-400 mt-0.5">Create a login for a new team member in your organisation.</p>
+                            </div>
+                            <button onClick={() => { setShowModal(false); setError(''); }} className="p-1.5 rounded-lg text-slate-500 hover:text-white hover:bg-white/[0.06] transition-colors"><X className="w-5 h-5" /></button>
                         </div>
-                        <form onSubmit={createUser} className="space-y-4">
+
+                        <form onSubmit={createUser} className="px-6 py-5 space-y-4">
+                            {/* Full Name */}
                             <div>
                                 <label className="block text-xs font-semibold text-slate-400 mb-1.5 uppercase tracking-wider">Full Name</label>
                                 <div className="relative">
-                                    <User className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
-                                    <input type="text" required value={form.full_name} onChange={e => setForm(f => ({ ...f, full_name: e.target.value }))}
-                                        placeholder="Dr. Jane Smith" className="clinical-textarea pl-10 h-10"
-                                        style={{ resize: 'none', height: '40px', fontFamily: 'inherit' }} />
+                                    <User className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" />
+                                    <input
+                                        type="text" required value={form.full_name}
+                                        onChange={e => setForm(f => ({ ...f, full_name: e.target.value }))}
+                                        placeholder="e.g. Dr. Jane Smith"
+                                        className="w-full bg-slate-800 border border-slate-600 hover:border-slate-500 focus:border-amber-500 focus:outline-none rounded-xl pl-10 pr-4 h-11 text-sm text-white placeholder-slate-500 transition-colors"
+                                    />
                                 </div>
                             </div>
+
+                            {/* Email */}
                             <div>
-                                <label className="block text-xs font-semibold text-slate-400 mb-1.5 uppercase tracking-wider">Email</label>
+                                <label className="block text-xs font-semibold text-slate-400 mb-1.5 uppercase tracking-wider">Email Address</label>
                                 <div className="relative">
-                                    <Mail className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
-                                    <input type="email" required value={form.email} onChange={e => setForm(f => ({ ...f, email: e.target.value }))}
-                                        placeholder="user@hospital.com" className="clinical-textarea pl-10 h-10"
-                                        style={{ resize: 'none', height: '40px', fontFamily: 'inherit' }} />
+                                    <Mail className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" />
+                                    <input
+                                        type="email" required value={form.email}
+                                        onChange={e => setForm(f => ({ ...f, email: e.target.value }))}
+                                        placeholder="user@hospital.com"
+                                        className="w-full bg-slate-800 border border-slate-600 hover:border-slate-500 focus:border-amber-500 focus:outline-none rounded-xl pl-10 pr-4 h-11 text-sm text-white placeholder-slate-500 transition-colors"
+                                    />
                                 </div>
                             </div>
+
+                            {/* Password */}
                             <div>
-                                <label className="block text-xs font-semibold text-slate-400 mb-1.5 uppercase tracking-wider">Password</label>
+                                <label className="block text-xs font-semibold text-slate-400 mb-1.5 uppercase tracking-wider">Temporary Password</label>
                                 <div className="relative">
-                                    <Lock className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
-                                    <input type={showPass ? 'text' : 'password'} required value={form.password} onChange={e => setForm(f => ({ ...f, password: e.target.value }))}
-                                        placeholder="Min 8 characters" className="clinical-textarea pl-10 pr-10 h-10"
-                                        style={{ resize: 'none', height: '40px', fontFamily: 'inherit' }} />
-                                    <button type="button" onClick={() => setShowPass(p => !p)} className="absolute right-3.5 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300">
+                                    <Lock className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" />
+                                    <input
+                                        type={showPass ? 'text' : 'password'} required value={form.password}
+                                        onChange={e => setForm(f => ({ ...f, password: e.target.value }))}
+                                        placeholder="Minimum 8 characters"
+                                        className="w-full bg-slate-800 border border-slate-600 hover:border-slate-500 focus:border-amber-500 focus:outline-none rounded-xl pl-10 pr-11 h-11 text-sm text-white placeholder-slate-500 transition-colors"
+                                    />
+                                    <button type="button" onClick={() => setShowPass(p => !p)} className="absolute right-3.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white transition-colors">
                                         {showPass ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                                     </button>
                                 </div>
                             </div>
+
+                            {/* Role */}
                             <div>
                                 <label className="block text-xs font-semibold text-slate-400 mb-1.5 uppercase tracking-wider">Role</label>
-                                <select value={form.role} onChange={e => setForm(f => ({ ...f, role: e.target.value as UserRole }))}
-                                    className="clinical-textarea h-10 appearance-none" style={{ resize: 'none', height: '40px', fontFamily: 'inherit' }}>
+                                <select
+                                    value={form.role}
+                                    onChange={e => setForm(f => ({ ...f, role: e.target.value as UserRole }))}
+                                    className="w-full bg-slate-800 border border-slate-600 hover:border-slate-500 focus:border-amber-500 focus:outline-none rounded-xl px-4 h-11 text-sm text-white transition-colors appearance-none cursor-pointer"
+                                >
                                     <option value="coder">Coder — Submit & view own branch cases</option>
+                                    <option value="rcm">RCM — Revenue cycle &amp; claims management</option>
                                     <option value="auditor">Auditor — Read-only across organisation</option>
                                     <option value="admin">Admin — Full access</option>
                                 </select>
                             </div>
+
+                            {/* Branch Assignment */}
                             <div>
                                 <label className="block text-xs font-semibold text-slate-400 mb-1.5 uppercase tracking-wider">Branch Assignment</label>
-                                <select value={form.branch_id} onChange={e => setForm(f => ({ ...f, branch_id: e.target.value }))}
-                                    className="clinical-textarea h-10 appearance-none" style={{ resize: 'none', height: '40px', fontFamily: 'inherit' }}>
+                                <select
+                                    value={form.branch_id}
+                                    onChange={e => setForm(f => ({ ...f, branch_id: e.target.value }))}
+                                    className="w-full bg-slate-800 border border-slate-600 hover:border-slate-500 focus:border-amber-500 focus:outline-none rounded-xl px-4 h-11 text-sm text-white transition-colors appearance-none cursor-pointer"
+                                >
                                     <option value="">Org-wide (no branch restriction)</option>
                                     {branches.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
                                 </select>
                             </div>
-                            {error && <p className="text-xs text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2">{error}</p>}
+
+                            {/* Error */}
+                            {error && (
+                                <p className="text-xs text-red-400 bg-red-500/10 border border-red-500/20 rounded-xl px-4 py-2.5">{error}</p>
+                            )}
+
+                            {/* Actions */}
                             <div className="flex gap-3 pt-1">
                                 <button type="button" onClick={() => { setShowModal(false); setError(''); }}
-                                    className="flex-1 py-2.5 rounded-xl border border-white/10 text-slate-400 hover:text-white text-sm font-medium transition-colors">Cancel</button>
-                                <button type="submit" disabled={saving} className="btn-primary flex-1 justify-center py-2.5">
+                                    className="flex-1 py-2.5 rounded-xl border border-white/10 text-slate-400 hover:text-white hover:border-white/20 text-sm font-medium transition-colors">
+                                    Cancel
+                                </button>
+                                <button type="submit" disabled={saving}
+                                    className="flex-1 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-500 disabled:opacity-60 disabled:cursor-not-allowed text-white text-sm font-semibold flex items-center justify-center gap-2 transition-colors shadow-lg shadow-amber-500/20">
                                     {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Create User'}
                                 </button>
                             </div>

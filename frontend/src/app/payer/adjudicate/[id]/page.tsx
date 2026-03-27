@@ -208,7 +208,7 @@ export default function AdjudicateClaimPage({ params }: { params: { id: string }
                                         {claimData.cpt_codes.map((cpt: any, idx: number) => (
                                             <div key={idx} className="flex items-center justify-between">
                                                 <div className="flex items-center gap-3">
-                                                    <div className="px-3 py-1 rounded-md bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 font-mono font-bold text-xs">
+                                                    <div className="px-3 py-1 rounded-md bg-amber-500/10 text-amber-400 border border-amber-500/20 font-mono font-bold text-xs">
                                                         {cpt.cpt_code}
                                                     </div>
                                                     <span className="text-sm text-slate-300">{cpt.description}</span>
@@ -240,11 +240,11 @@ export default function AdjudicateClaimPage({ params }: { params: { id: string }
 
                     {/* FHIR Claim Proposal */}
                     {fhirProposal && (
-                        <div className="bg-slate-900/50 rounded-2xl border border-indigo-900/30 p-6">
+                        <div className="bg-slate-900/50 rounded-2xl border border-amber-900/30 p-6">
                             <h2 className="text-lg font-bold text-white mb-4 flex items-center gap-2">
-                                <FileCode2 className="w-5 h-5 text-indigo-400" />
+                                <FileCode2 className="w-5 h-5 text-amber-400" />
                                 FHIR Claim Proposal
-                                <span className="ml-auto text-[10px] font-bold uppercase tracking-widest px-2 py-1 rounded bg-indigo-500/10 text-indigo-400 border border-indigo-500/20">
+                                <span className="ml-auto text-[10px] font-bold uppercase tracking-widest px-2 py-1 rounded bg-amber-500/10 text-amber-400 border border-amber-500/20">
                                     Hospital Proposed
                                 </span>
                             </h2>
@@ -273,14 +273,14 @@ export default function AdjudicateClaimPage({ params }: { params: { id: string }
                                 <div className="bg-[#090d14]/80 p-3 rounded-xl border border-white/5">
                                     <p className="text-[10px] text-slate-500 uppercase tracking-wider font-semibold mb-1.5">
                                         Diagnoses&nbsp;
-                                        <span className="text-indigo-400 normal-case font-normal">
+                                        <span className="text-amber-400 normal-case font-normal">
                                             ({fhirProposal.extension?.find((e: any) => e.url?.includes('icd-version'))?.valueString || 'ICD'})
                                         </span>
                                     </p>
                                     <div className="space-y-1.5">
                                         {(fhirProposal.diagnosis || []).map((d: any, idx: number) => (
                                             <div key={idx} className="flex items-center gap-2 text-sm">
-                                                <span className="font-mono px-2 py-0.5 rounded bg-indigo-500/10 text-indigo-300 border border-indigo-500/20 text-xs">
+                                                <span className="font-mono px-2 py-0.5 rounded bg-amber-500/10 text-amber-300 border border-amber-500/20 text-xs">
                                                     {d.diagnosisCodeableConcept?.coding?.[0]?.code}
                                                 </span>
                                                 <span className="text-slate-300 text-xs truncate">{d.diagnosisCodeableConcept?.coding?.[0]?.display}</span>
@@ -324,7 +324,7 @@ export default function AdjudicateClaimPage({ params }: { params: { id: string }
                             {/* Collapsible raw JSON viewer */}
                             <button
                                 onClick={() => setFhirExpanded(v => !v)}
-                                className="flex items-center gap-2 text-xs text-slate-400 hover:text-indigo-300 transition-colors font-semibold"
+                                className="flex items-center gap-2 text-xs text-slate-400 hover:text-amber-300 transition-colors font-semibold"
                             >
                                 {fhirExpanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
                                 {fhirExpanded ? 'Hide raw FHIR JSON' : 'View raw FHIR Claim JSON'}
@@ -384,7 +384,7 @@ export default function AdjudicateClaimPage({ params }: { params: { id: string }
                                                 {editIcdCodes.map((icd, idx) => (
                                                     <div key={idx} className="flex gap-2 items-center">
                                                         <input
-                                                            className="w-32 bg-slate-800 border border-white/10 rounded-lg px-2 py-1.5 text-xs font-mono text-indigo-300 focus:border-indigo-400 outline-none"
+                                                            className="w-32 bg-slate-800 border border-white/10 rounded-lg px-2 py-1.5 text-xs font-mono text-amber-300 focus:border-amber-400 outline-none"
                                                             value={icd.code}
                                                             onChange={e => {
                                                                 const next = [...editIcdCodes];
@@ -394,7 +394,7 @@ export default function AdjudicateClaimPage({ params }: { params: { id: string }
                                                             placeholder="ICD code"
                                                         />
                                                         <input
-                                                            className="flex-1 bg-slate-800 border border-white/10 rounded-lg px-2 py-1.5 text-xs text-slate-300 focus:border-indigo-400 outline-none"
+                                                            className="flex-1 bg-slate-800 border border-white/10 rounded-lg px-2 py-1.5 text-xs text-slate-300 focus:border-amber-400 outline-none"
                                                             value={icd.description}
                                                             onChange={e => {
                                                                 const next = [...editIcdCodes];
@@ -576,7 +576,7 @@ export default function AdjudicateClaimPage({ params }: { params: { id: string }
                                         <div className={`absolute left-1.5 top-1.5 w-2.5 h-2.5 rounded-full border-2 border-[#090d14] ${
                                             log.new_status === 'DENIED' ? 'bg-red-500' :
                                             log.new_status === 'PAID' ? 'bg-emerald-500' :
-                                            'bg-indigo-500'
+                                            'bg-amber-500'
                                         }`} />
                                         
                                         <div className="bg-slate-900/50 p-3 rounded-lg border border-white/5">
@@ -587,7 +587,7 @@ export default function AdjudicateClaimPage({ params }: { params: { id: string }
                                                     <span className={`text-xs font-bold ${
                                                         log.new_status === 'DENIED' ? 'text-red-400' :
                                                         log.new_status === 'PAID' ? 'text-emerald-400' :
-                                                        'text-indigo-400'
+                                                        'text-amber-400'
                                                     }`}>{log.new_status}</span>
                                                 </div>
                                                 <span className="text-[10px] text-slate-500">

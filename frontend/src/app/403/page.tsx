@@ -53,7 +53,7 @@ export default function ForbiddenPage() {
                 <div className="flex flex-col sm:flex-row gap-3 justify-center">
                     <Link
                         href={homeHref}
-                        className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-medium transition-colors"
+                        className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-500 text-white text-sm font-medium transition-colors"
                     >
                         <ArrowLeft className="w-4 h-4" />
                         Go to my Dashboard

@@ -284,31 +284,50 @@ async def list_payers():
 @router.get("/payers/by-org/{org_id}")
 async def get_payer_for_org(org_id: str):
     """
-    Resolves the payer record for a given organization by name-matching.
-    Example: Nathin is in 'Global Health Insurance' org -> matches the
-    'Global Health Insurance' payer record so inbox shows only his claims.
+    Resolves the payer record for a given organization by its organization_id.
+    If an insurance_payer logs in for the first time, auto-creates a payer configured for them.
     """
     supabase = get_supabase()
     try:
         org_res = getattr(
-            supabase.table("organizations").select("name").eq("id", org_id).single(),
+            supabase.table("organizations").select("id, name, type").eq("id", org_id).single(),
             "execute"
         )()
         if not org_res or not org_res.data:
             raise HTTPException(status_code=404, detail="Organization not found")
-        org_name = org_res.data["name"]
+        
+        org_data = org_res.data
+        if org_data["type"] != "insurance_payer":
+            raise HTTPException(status_code=400, detail="Organization is not a payer")
 
+        # Try to find the exact linked payer record
         payer_res = getattr(
             supabase.table("payers")
             .select("id, name, payer_type, base_allowed_multiplier")
-            .ilike("name", org_name)
+            .eq("organization_id", org_id)
             .limit(1),
             "execute"
         )()
-        if payer_res and payer_res.data and len(payer_res.data) > 0:
+
+        if payer_res.data and len(payer_res.data) > 0:
             return {"payer": payer_res.data[0]}
 
-        raise HTTPException(status_code=404, detail=f"No payer record found matching org '{org_name}'")
+        # Auto-create if not found (Lazy initialization)
+        log.info(f"Auto-creating payer record for org {org_data['name']} ({org_id})")
+        new_payer = getattr(
+            supabase.table("payers").insert({
+                "organization_id": org_id,
+                "name": org_data["name"],
+                "payer_type": "commercial",
+                "base_allowed_multiplier": 1.00
+            }),
+            "execute"
+        )()
+        
+        return {"payer": new_payer.data[0]}
+    except Exception as exc:
+        log.error("payer_org_fetch_failed", error=str(exc))
+        raise HTTPException(status_code=500, detail="Failed to fetch payer record")
     except HTTPException:
         raise
     except Exception as e:

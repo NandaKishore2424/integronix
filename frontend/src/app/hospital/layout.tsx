@@ -31,7 +31,7 @@ export default function HospitalLayout({ children }: { children: React.ReactNode
         return (
             <div className="min-h-screen flex items-center justify-center">
                 <div className="flex flex-col items-center gap-3">
-                    <div className="animate-spin w-8 h-8 border-2 border-indigo-500/30 border-t-indigo-500 rounded-full" />
+                    <div className="animate-spin w-8 h-8 border-2 border-amber-500/30 border-t-amber-500 rounded-full" />
                     <p className="text-sm text-slate-500">Loading workspace…</p>
                 </div>
             </div>
@@ -50,7 +50,7 @@ export default function HospitalLayout({ children }: { children: React.ReactNode
                 {/* Logo */}
                 <div className="px-5 py-5 border-b border-white/[0.06]">
                     <Link href="/hospital/coder/analyze" className="flex items-center gap-2.5">
-                        <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-indigo-500 to-violet-600 flex items-center justify-center shrink-0">
+                        <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-amber-500 to-orange-600 flex items-center justify-center shrink-0">
                             <BarChart3 className="w-4 h-4 text-white" />
                         </div>
                         <span className="font-bold text-white text-sm leading-tight">Integronix Provider</span>
@@ -74,13 +74,13 @@ export default function HospitalLayout({ children }: { children: React.ReactNode
                                 key={item.href}
                                 href={item.href}
                                 className={`flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all group ${active
-                                        ? 'bg-indigo-500/20 text-white border border-indigo-500/30'
+                                        ? 'bg-amber-500/20 text-white border border-amber-500/30'
                                         : 'text-slate-400 hover:text-white hover:bg-white/[0.06]'
                                     }`}
                             >
-                                <item.icon className={`w-4 h-4 shrink-0 ${active ? 'text-indigo-400' : 'text-slate-500 group-hover:text-slate-300'}`} />
+                                <item.icon className={`w-4 h-4 shrink-0 ${active ? 'text-amber-400' : 'text-slate-500 group-hover:text-slate-300'}`} />
                                 {item.name}
-                                {active && <ChevronRight className="w-3 h-3 ml-auto text-indigo-400/60" />}
+                                {active && <ChevronRight className="w-3 h-3 ml-auto text-amber-400/60" />}
                             </Link>
                         );
                     })}
@@ -89,7 +89,7 @@ export default function HospitalLayout({ children }: { children: React.ReactNode
                 {/* User footer */}
                 <div className="px-3 py-4 border-t border-white/[0.06]">
                     <div className="flex items-center gap-3 px-3 py-3 rounded-xl bg-white/[0.04] mb-2">
-                        <div className="w-7 h-7 rounded-full bg-gradient-to-br from-indigo-500 to-violet-600 flex items-center justify-center text-white text-xs font-bold shrink-0">
+                        <div className="w-7 h-7 rounded-full bg-gradient-to-br from-amber-500 to-orange-600 flex items-center justify-center text-white text-xs font-bold shrink-0">
                             {orgUser.full_name.charAt(0).toUpperCase()}
                         </div>
                         <div className="min-w-0 flex-1">
@@ -97,7 +97,7 @@ export default function HospitalLayout({ children }: { children: React.ReactNode
                             <div className={`text-[10px] font-semibold uppercase tracking-wider mt-0.5 ${
                                 orgUser.role === 'admin'   ? 'text-amber-400' :
                                 orgUser.role === 'auditor' ? 'text-blue-400'  :
-                                orgUser.role === 'rcm'     ? 'text-violet-400' :
+                                orgUser.role === 'rcm'     ? 'text-orange-400' :
                                 orgUser.role === 'payer'   ? 'text-emerald-400' :
                                 'text-emerald-400' // coder
                             }`}>

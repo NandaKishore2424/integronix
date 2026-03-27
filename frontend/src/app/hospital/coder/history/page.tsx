@@ -154,10 +154,10 @@ export default function CasesPage() {
 
                     {stats ? (
                         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-6">
-                            <StatCard icon={BarChart3}    value={String(stats.total_cases)}                           label="Total Cases"           color="bg-indigo-500/15 text-indigo-400" />
+                            <StatCard icon={BarChart3}    value={String(stats.total_cases)}                           label="Total Cases"           color="bg-amber-500/15 text-amber-400" />
                             <StatCard icon={TrendingUp}   value={stats.total_revenue_recovered > 0 ? formatCurrency(stats.total_revenue_recovered) : '—'} label="Revenue Recovered" color="bg-emerald-500/15 text-emerald-400" />
                             <StatCard icon={AlertTriangle} value={String(stats.high_risk_count)}                      label="HIGH Risk Flagged"     color="bg-red-500/15 text-red-400" />
-                            <StatCard icon={Shield}        value={`${stats.accuracy_rate}%`}                          label="Accuracy Rate"         color="bg-violet-500/15 text-violet-400" />
+                            <StatCard icon={Shield}        value={`${stats.accuracy_rate}%`}                          label="Accuracy Rate"         color="bg-violet-500/15 text-orange-400" />
                         </div>
                     ) : (
                         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-6">
@@ -173,7 +173,7 @@ export default function CasesPage() {
 
                         {/* Risk filter */}
                         <select
-                            className="text-xs bg-white/[0.04] border border-white/[0.08] text-slate-300 rounded-lg px-3 py-1.5 focus:outline-none focus:border-indigo-500/50"
+                            className="text-xs bg-white/[0.04] border border-white/[0.08] text-slate-300 rounded-lg px-3 py-1.5 focus:outline-none focus:border-amber-500/50"
                             value={filters.risk_label ?? ''}
                             onChange={e => applyFilter('risk_label', e.target.value)}
                         >
@@ -185,7 +185,7 @@ export default function CasesPage() {
 
                         {/* Source filter */}
                         <select
-                            className="text-xs bg-white/[0.04] border border-white/[0.08] text-slate-300 rounded-lg px-3 py-1.5 focus:outline-none focus:border-indigo-500/50"
+                            className="text-xs bg-white/[0.04] border border-white/[0.08] text-slate-300 rounded-lg px-3 py-1.5 focus:outline-none focus:border-amber-500/50"
                             value={filters.document_source ?? ''}
                             onChange={e => applyFilter('document_source', e.target.value)}
                         >
@@ -270,7 +270,7 @@ export default function CasesPage() {
                                                 </div>
 
                                                 {/* AI Code */}
-                                                <span className="text-xs font-mono font-bold text-indigo-300">
+                                                <span className="text-xs font-mono font-bold text-amber-300">
                                                     {c.ai_icd_code ?? '—'}
                                                 </span>
 
