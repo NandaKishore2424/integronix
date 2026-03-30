@@ -115,7 +115,7 @@ export default function LoginPage() {
                         <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-amber-500 to-orange-600 flex items-center justify-center">
                             <BarChart3 className="w-4 h-4 text-white" />
                         </div>
-                        <span className="font-bold text-white">Integronix</span>
+                        <span className="font-bold text-white">CodePerfect Auditor</span>
                     </div>
 
                     <h1 className="text-2xl font-extrabold text-white mb-1">Welcome back</h1>

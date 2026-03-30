@@ -50,7 +50,7 @@ export default function PayerLayout({ children }: { children: React.ReactNode })
                         <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-emerald-500 to-teal-600 flex items-center justify-center shrink-0">
                             <Building2 className="w-4 h-4 text-white" />
                         </div>
-                        <span className="font-bold text-white text-sm leading-tight">Integronix Payer</span>
+                        <span className="font-bold text-white text-sm leading-tight">CodePerfect Auditor</span>
                     </Link>
                     {org && (
                         <div className="mt-3 px-2 py-2 rounded-lg bg-white/[0.04] border border-emerald-900/50">
