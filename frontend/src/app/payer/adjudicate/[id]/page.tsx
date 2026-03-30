@@ -228,7 +228,7 @@ export default function AdjudicateClaimPage({ params }: { params: { id: string }
                                 {isRisky ? <AlertOctagon className="w-5 h-5 text-red-500 shrink-0 mt-0.5" /> : <ShieldCheck className="w-5 h-5 text-emerald-500 shrink-0 mt-0.5" />}
                                 <div>
                                     <h3 className={`font-semibold text-sm ${isRisky ? 'text-red-400' : 'text-emerald-400'}`}>
-                                        Integronix Risk Score: {Math.round(riskScore * 100)}%
+                                        CodePerfect Auditor Risk Score: {Math.round(riskScore * 100)}%
                                     </h3>
                                     <p className="text-xs text-slate-300 mt-1">
                                         {isRisky ? 'High risk of overcoding detected. Scrutiny recommended prior to payment.' : 'Algorithm indicates high clinical-to-code alignment. Low risk.'}

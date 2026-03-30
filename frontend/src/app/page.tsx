@@ -13,7 +13,7 @@ export default function LandingPage() {
             <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-amber-500 to-orange-600 flex items-center justify-center">
               <BarChart3 className="w-4 h-4 text-white" />
             </div>
-            <span className="text-lg font-bold text-white tracking-tight">Integronix</span>
+            <span className="text-lg font-bold text-white tracking-tight">CodePerfect Auditor</span>
             <span className="hidden sm:block text-xs font-medium text-slate-500 border border-white/10 rounded-full px-2.5 py-0.5">Revenue Integrity Platform</span>
           </div>
           <div className="flex items-center gap-3">
@@ -44,7 +44,7 @@ export default function LandingPage() {
             </span>
           </h1>
           <p className="text-lg text-slate-400 max-w-2xl mx-auto leading-relaxed mb-10">
-            Integronix is an AI-powered medical coding audit engine that catches undercoding, overcoding, and specificity gaps — before your claim hits the payer.
+            CodePerfect Auditor is an AI-powered medical coding audit engine that catches undercoding, overcoding, and specificity gaps — before your claim hits the payer.
           </p>
           <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
             <Link href="/auth/signup" className="btn-primary text-base py-3.5 px-8 flex items-center gap-2">
@@ -98,7 +98,7 @@ export default function LandingPage() {
       <section className="py-20 px-6 border-t border-white/[0.05]">
         <div className="max-w-5xl mx-auto">
           <div className="text-center mb-14">
-            <h2 className="text-3xl font-bold mb-3">How Integronix Works</h2>
+            <h2 className="text-3xl font-bold mb-3">How CodePerfect Auditor Works</h2>
             <p className="text-slate-400">Three steps — from messy doctor notes to clean, audit-ready ICD codes.</p>
           </div>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
@@ -170,7 +170,7 @@ export default function LandingPage() {
             <div className="w-6 h-6 rounded bg-gradient-to-br from-amber-500 to-orange-600 flex items-center justify-center">
               <BarChart3 className="w-3 h-3 text-white" />
             </div>
-            <span className="text-sm font-semibold text-white">Integronix</span>
+            <span className="text-sm font-semibold text-white">CodePerfect Auditor</span>
             <span className="text-slate-600 text-sm">© 2025</span>
           </div>
           <div className="flex items-center gap-3 flex-wrap justify-center">
