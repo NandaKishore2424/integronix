@@ -1,0 +1,43 @@
+Architectural Goals and Constraints
+
+This section describes the requirements and objectives that have some significant impact on the architecture: use of an off-the-shelf product, portability, distribution, and reuse. It also captures the special constraints that may apply: for example, development tools, legacy code, and so on. Document assumptions, if any, for each architectural goal that is described.
+
+1.5 Reusability
+
+User interface related components built throughout the CodePerfect Integronix implementation will be utilized for the second phase of the back-end data server enhancement project. Therefore, the core of the React UI system and the FastAPI microservices must be inherently reusable across different phases of the enhancement project, reducing technical debt and standardizing the clinical presentation layer.
+
+1.6 Scalability
+
+The system must scale elastically to accommodate fluctuating clinical data volumes. The architecture leverages serverless backend execution via GCP Cloud Run and Vercel for the frontend, permitting automated horizontal scaling from zero to handle peak concurrent inference requests. The primary limitations to absolute scale are downstream rate limits imposed by the external WHO ICD API v2 endpoints and the Groq LLM infrastructure, which are mitigated locally via a PostgreSQL based warm-caching mechanism.
+
+1.7 Customizability
+
+UI customizability and administrative configuration will be heavily supported. The clinical coding engine allows tenant administrators to dynamically toggle between ICD-11 and ICD-10 sets, adjust clinical coding aggressiveness profiles, and define specific insurance claim scheme contexts (e.g., Ayushman Bharat versus distinct private payers) via organization-level settings tables without necessitating active code deployments.
+
+1.8 Extendibility
+
+The system should be highly extendible to support feature expansions and to allow modular development. The architectural foundation leverages LangGraph's stateful, Directed Acyclic Graph (DAG) pattern, enabling engineering teams to inject new clinical processing nodes, such as automated prior authorization checks or dynamic ontology mapping, into the existing pipeline as isolated functional blocks without risking regression in the core diagnostic logic.
+
+1.9 Use of Existing Business Logic
+
+The system aggressively uses existing, validated clinical application business logic by migrating it into reusable system components. Rather than attempting to rewrite fundamental medical terminology mapping, the architecture interfaces directly with the authoritative WHO ICD API v2 as its primary resolution service. Existing legacy SNOMED CT terminology relationships and established DRG reimbursement logics are abstracted into optimized, centralized database lookup schemas serving as rapid fallback layers.
+
+1.10 Time to Market
+
+Aggressive time-to-market constraints heavily influenced the core technology stack selection. By standardizing on managed cloud services like Supabase for instant PostgreSQL provisioning, Role-Based Access Control, and Row Level Security, alongside Groq's high velocity LLaMA 3.3-70B NLP endpoints, engineering velocity was maximized. Development focus was entirely preserved for orchestrating the sophisticated clinical LangGraph pipeline rather than establishing low-level infrastructure. 
+
+1.11 Portability
+
+OS and database portability are strictly maintained. The backend engine and API gateways are fully containerized using Docker runtime environments, providing complete OS and execution portability across local developer workstations, staging instances, and production GCP Cloud Run clusters. The data layer utilizes standard PostgreSQL, avoiding proprietary vendor lock-in and securing a pathway for potential future migrations to on-premises enterprise data centers if required by hospital governance.
+
+1.12 Availability
+
+Stringent uptime constraints and fault tolerance are mandatory for hospital revenue cycle operations. The system relies on globally distributed, highly available managed services for edge routing. At the application layer, the LangGraph pipeline is constructed with deterministic failover routing; if the primary WHO external API tier experiences latency or downtime, the system automatically redirects live classification requests to local pgvector embedding searches and isolated static ontology databases.
+
+1.13 Performance
+
+Performance criteria dictates near real-time processing of unstructured clinical documents to support frictionless physician documentation workflows. Sub-second clinical NLP extraction is achieved by securely routing analytical workloads to Groq's specialized Language Processing Unit (LPU) AI inference hardware. Relational database topologies are highly indexed and routed via efficient connection poolers, and external OAuth authorization tokens are proactively cached in application memory to eliminate sequential network latency.
+
+1.14 Any Other Critical Goals Applicable
+
+Data Segregation and Regulatory Compliance is a paramount architectural mandate. The system mathematically guarantees multi-tenant data isolation at the foundational database schema level utilizing PostgreSQL Row Level Security (RLS). This ensures that Protected Health Information (PHI) corresponding to isolated hospital networks or discrete physical branches cannot be intermixed or cross-accessed, enforcing absolute compliance with the Digital Personal Data Protection Bill (DPDPB) and ABHA security mandates.

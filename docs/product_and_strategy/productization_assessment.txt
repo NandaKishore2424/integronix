@@ -1,0 +1,27 @@
+2 Productization Assessment
+
+2.1 Re-Usable Components
+
+This section specifies the information relating to the reuse analysis performed with the requirements document as input. The CodePerfect Integronix architecture is designed with modularity as a primary mandate, yielding several core components that can be immediately extracted and reused across the wider enterprise portfolio. The LangGraph cognitive routing engine (the "AI coding pipeline") is entirely decoupled from the client presentation layer. This isolated Directed Acyclic Graph (DAG) state machine can be published as a private Python package, allowing parallel data engineering teams to embed the proprietary WHO API resolution logic and clinical text NLP extraction directly into external batch-processing ETL workflows or localized hospital Electronic Health Record (EHR) systems without UI dependencies. Additionally, the JWT-based Supabase authentication and Row Level Security (RLS) policies acting as the tenant isolation layer serve as a reusable boilerplate standard for any subsequent multi-tenant cloud applications within the organization. 
+
+2.2 Analyze Architectural Frameworks in Repository
+
+This section analyzes frameworks in the repository that can be reused in the architecture under discussion. The engineering topology heavily leverages existing, proven frameworks rather than rebuilding bespoke infrastructure. The presentation layer utilizes the Next.js framework (App Router architecture) running React Server Components, providing a reusable, highly optimized blueprint for server-side rendering and SEO-compliant hospital portals. For the backend gateway, we standardized on the FastAPI framework utilizing Pydantic for rigid data validation and serialization; this provides an automatically documented (OpenAPI/Swagger), highly concurrent REST API framework that mandates type safety. Finally, the orchestration of the AI models relies entirely on the LangGraph framework, which was selected over traditional linear chaining due to its native support for persistent conversational memory, cyclical error-recovery routing, and structured state management required for complex clinical decision-making.
+
+2.3 Identify and Analyze Open Source and COTS Products
+
+This section documents the open source and Commercial Off-The-Shelf (COTS) products identified for use in the project along with the copyright and legal approval needs. The platform minimizes proprietary licensing costs by aggressively adopting mature Open Source Software (OSS) and robust managed Commercial Off-The-Shelf (COTS) services. 
+
+Open Source Components:
+- Python 3.11+ (PSF License): The core backend execution environment.
+- PostgreSQL & pgvector (PostgreSQL License): The underlying relational and vector database engine.
+- FastAPI & Pydantic (MIT License): High-performance asynchronous REST framework.
+- LangGraph (MIT License): AI agent orchestration framework.
+- React & TailwindCSS (MIT License): Frontend UI and styling frameworks.
+- Tesseract OCR (Apache 2.0): Optical Character Recognition engine for processing scanned clinical PDFs.
+
+Managed COTS/PaaS Products:
+- Supabase (Backend-as-a-Service): Handles managed PostgreSQL hosting, Go-based Auth services, and connection pooling. Aligns with standard enterprise B2B SaaS agreements.
+- Groq Cloud (API Service): Provides the Language Processing Unit (LPU) inference hardware for the LLaMA 3.3-70B model, delivering the extreme low-latency NLP parsing required for the clinical extraction node.
+- World Health Organization ICD API v2 (API Service): The definitive, authoritative external registry for ICD-11 coding taxonomy. Requires adherence to WHO API Terms of Use, utilized here under the standard Client Credentials OAuth2 mandate.
+- Google Cloud Run & Vercel (PaaS): Serverless container execution environments utilized for backend and frontend hosting respectively, eliminating the need for dedicated Kubernetes cluster management.
