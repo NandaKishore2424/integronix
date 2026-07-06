@@ -25,3 +25,8 @@ ICD-data/
 
 # ── Personal build notes (may contain secrets) ───────────
 Building Frontend Dashboard_Integronix.md
+
+# ── Local-only docs/notes (kept out of the tracked repo) ─
+docs/
+documents/
+figures/
