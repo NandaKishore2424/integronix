@@ -135,8 +135,6 @@ frontend/
 migrations/
   schema/  tables + RLS policies
   seeds/   demo data
-
-docs/  architecture, schema, medical-domain, ingestion notes — see docs/README.md
 ```
 
 27 REST endpoints across `code` (run the pipeline), `claims` (submit/adjudicate/appeal/export EDI), `icd`, `parse`, `payers`, `cases`, and `analytics`.
@@ -148,7 +146,7 @@ docs/  architecture, schema, medical-domain, ingestion notes — see docs/README
 cd backend
 python3 -m venv venv && source venv/bin/activate   # Windows: venv\Scripts\activate
 pip install -r requirements.txt
-cp .env.example .env   # GROQ_API_KEY, SUPABASE_URL, SUPABASE_KEY, SUPABASE_SERVICE_KEY, JWT_SECRET
+cp .env.example .env   # SUPABASE_URL, SUPABASE_ANON_KEY, SUPABASE_SERVICE_KEY, DATABASE_URL, GROQ_API_KEY
 ```
 
 **Database** — run everything in `migrations/schema/` in order via the Supabase SQL editor, then:
@@ -159,8 +157,8 @@ python3 scripts/generate_embeddings.py
 **Frontend**
 ```bash
 cd frontend
-npm install
-cp .env.example .env.local   # NEXT_PUBLIC_API_URL, NEXT_PUBLIC_SUPABASE_URL, NEXT_PUBLIC_SUPABASE_ANON_KEY
+pnpm install
+cp .env.local.example .env.local   # NEXT_PUBLIC_API_URL, NEXT_PUBLIC_SUPABASE_URL, NEXT_PUBLIC_SUPABASE_ANON_KEY, NEXT_PUBLIC_DEMO_EMAIL, NEXT_PUBLIC_DEMO_PASSWORD
 ```
 
 **Run both**
@@ -169,7 +167,7 @@ cp .env.example .env.local   # NEXT_PUBLIC_API_URL, NEXT_PUBLIC_SUPABASE_URL, NE
 uvicorn main:app --host 0.0.0.0 --port 8000 --reload   # docs at /docs
 
 # frontend
-npm run dev   # localhost:3001
+pnpm dev   # localhost:3000
 ```
 
 **Smoke test**
@@ -196,11 +194,11 @@ pytest tests/ -v                        # + live Supabase integration tests
 | `ModuleNotFoundError` | venv isn't active |
 | `GROQ_API_KEY not set` | `.env` missing or incomplete |
 | pgvector RPC returns nothing | run `generate_embeddings.py` after seeding |
-| Supabase `401` | `SUPABASE_KEY` wrong/expired |
+| Supabase `401` | `SUPABASE_ANON_KEY` / `SUPABASE_SERVICE_KEY` wrong or expired |
 
 ## More docs
 
-`docs/` has the deeper writeups — the full decision algorithm, database schema, SNOMED/WHO integration notes, ingestion runbooks. Start at `docs/README.md`.
+`docs/` has the deeper writeups — the full decision algorithm, database schema, SNOMED/WHO integration notes, ingestion runbooks. It is kept **local-only** (gitignored), so it is not present in a fresh clone.
 
 ## Contributing
 
