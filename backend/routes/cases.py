@@ -7,9 +7,10 @@ routes/cases.py — Case History API
 Data comes from a Supabase join of clinical_cases + coding_results.
 RLS on both tables ensures org-level isolation automatically via the service key.
 """
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from typing import Optional
 from database import select, select_one, select_paginated
+from auth import Principal, get_principal
 from models import CaseSummary, CaseListResponse, CaseStatsResponse
 from logger import get_logger
 
@@ -59,6 +60,7 @@ async def list_cases(
     branch_id:       Optional[str]  = Query(None, description="Filter by branch UUID"),
     date_from:       Optional[str]  = Query(None, description="ISO date string e.g. 2026-01-01"),
     date_to:         Optional[str]  = Query(None, description="ISO date string e.g. 2026-03-31"),
+    principal:       Principal      = Depends(get_principal),
 ):
     """
     Returns a paginated list of cases with summary data from coding_results.
@@ -84,7 +86,8 @@ async def list_cases(
         "clinical_cases!inner(session_id,document_source,ocr_used,raw_text_snippet,processing_status)"
     )
 
-    cr_filters: dict = {}
+    # Tenant scope is derived from the token, never from a query parameter.
+    cr_filters: dict = {"organization_id": f"eq.{principal.organization_id}"}
     if risk_label:
         cr_filters["risk_label"] = f"eq.{risk_label.upper()}"
     if document_source:
@@ -142,7 +145,7 @@ async def list_cases(
     response_model=CaseStatsResponse,
     summary="Aggregate KPIs for the Cases summary cards",
 )
-async def get_case_stats():
+async def get_case_stats(principal: Principal = Depends(get_principal)):
     """
     Returns aggregate statistics for the summary card row at the top
     of the Cases page:
@@ -157,6 +160,7 @@ async def get_case_stats():
         all_rows = await select(
             "coding_results",
             query="risk_label,discrepancy_type,financial_delta",
+            filters={"organization_id": f"eq.{principal.organization_id}"},
         )
     except Exception as e:
         log.error("cases_stats_failed", error=str(e))
@@ -189,7 +193,10 @@ async def get_case_stats():
     "/{session_id}",
     summary="Get full details for a single historical case",
 )
-async def get_case_detail(session_id: str):
+async def get_case_detail(
+    session_id: str,
+    principal: Principal = Depends(get_principal),
+):
     """
     Returns the full coding result for a historical case identified by session_id.
     The response shape matches CodeResponse so the frontend can render the full
@@ -200,7 +207,10 @@ async def get_case_detail(session_id: str):
         case = await select_one(
             "clinical_cases",
             query="*",
-            filters={"session_id": f"eq.{session_id}"},
+            filters={
+                "session_id": f"eq.{session_id}",
+                "organization_id": f"eq.{principal.organization_id}",
+            },
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Case lookup failed: {str(e)}")

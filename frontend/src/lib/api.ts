@@ -1,5 +1,6 @@
 // lib/api.ts — Typed API client for Integronix backend
 
+import { supabase } from '@/lib/supabase';
 import { CodeResponse, PipelineRequest } from '@/types/coding';
 import { CaseListResponse, CaseStatsResponse, CasesFilters } from '@/types/cases';
 import type { CodeResponse as FullCase } from '@/types/coding';
@@ -14,9 +15,43 @@ export class ApiError extends Error {
     }
 }
 
+/**
+ * Attach the caller's Supabase access token.
+ *
+ * Every /api/v1 endpoint verifies this token and derives the caller's
+ * organization from it — the backend no longer trusts an org_id sent by the
+ * client. Without this header the request is rejected with 401.
+ */
+async function authHeaders(): Promise<Record<string, string>> {
+    const { data } = await supabase.auth.getSession();
+    const token = data.session?.access_token;
+    return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
+/**
+ * fetch() with authentication. Use for every backend call.
+ *
+ * A 401 means the session lapsed mid-flight; bounce to login rather than
+ * surfacing a confusing error deep in a component.
+ */
+async function apiFetch(input: string, init: RequestInit = {}): Promise<Response> {
+    const res = await fetch(input, {
+        ...init,
+        headers: {
+            ...(init.headers as Record<string, string> | undefined),
+            ...(await authHeaders()),
+        },
+    });
+
+    if (res.status === 401 && typeof window !== 'undefined') {
+        window.location.href = '/auth/login';
+    }
+    return res;
+}
+
 /** POST /api/v1/code/run — accepts raw clinical text (JSON) */
 export async function runCodingPipeline(params: PipelineRequest): Promise<CodeResponse> {
-    const res = await fetch(`${API_BASE}/api/v1/code/run`, {
+    const res = await apiFetch(`${API_BASE}/api/v1/code/run`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -45,7 +80,7 @@ export async function runPdfPipeline(
     if (orgId) form.append('org_id', orgId);
 
     // Do NOT set Content-Type — browser adds multipart boundary automatically
-    const res = await fetch(`${API_BASE}/api/v1/code/run-pdf`, {
+    const res = await apiFetch(`${API_BASE}/api/v1/code/run-pdf`, {
         method: 'POST',
         body: form,
     });
@@ -80,7 +115,7 @@ export async function fetchCases(filters: CasesFilters = {}): Promise<CaseListRe
     if (filters.document_source)  params.set('document_source', filters.document_source);
     if (filters.branch_id)        params.set('branch_id',       filters.branch_id);
 
-    const res = await fetch(`${API_BASE}/api/v1/cases?${params.toString()}`);
+    const res = await apiFetch(`${API_BASE}/api/v1/cases?${params.toString()}`);
     if (!res.ok) {
         const err = await res.json().catch(() => ({ detail: 'Unknown error' }));
         throw new ApiError(res.status, err.detail ?? `HTTP ${res.status}`);
@@ -90,7 +125,7 @@ export async function fetchCases(filters: CasesFilters = {}): Promise<CaseListRe
 
 /** GET /api/v1/cases/stats — KPI aggregates for the summary cards */
 export async function fetchCaseStats(): Promise<CaseStatsResponse> {
-    const res = await fetch(`${API_BASE}/api/v1/cases/stats`);
+    const res = await apiFetch(`${API_BASE}/api/v1/cases/stats`);
     if (!res.ok) {
         const err = await res.json().catch(() => ({ detail: 'Unknown error' }));
         throw new ApiError(res.status, err.detail ?? `HTTP ${res.status}`);
@@ -100,7 +135,7 @@ export async function fetchCaseStats(): Promise<CaseStatsResponse> {
 
 /** GET /api/v1/cases/{session_id} — full result for a historical case */
 export async function fetchCaseDetail(sessionId: string): Promise<CodeResponse> {
-    const res = await fetch(`${API_BASE}/api/v1/cases/${sessionId}`);
+    const res = await apiFetch(`${API_BASE}/api/v1/cases/${sessionId}`);
     if (!res.ok) {
         const err = await res.json().catch(() => ({ detail: 'Unknown error' }));
         throw new ApiError(res.status, err.detail ?? `HTTP ${res.status}`);
@@ -113,7 +148,7 @@ export async function fetchCaseDetail(sessionId: string): Promise<CodeResponse> 
 /** GET /api/v1/analytics/overview — KPI cards + 30-day trend */
 export async function fetchAnalyticsOverview(orgId?: string): Promise<AnalyticsOverview> {
     const url = orgId ? `${API_BASE}/api/v1/analytics/overview?org_id=${orgId}` : `${API_BASE}/api/v1/analytics/overview`;
-    const res = await fetch(url);
+    const res = await apiFetch(url);
     if (!res.ok) {
         const err = await res.json().catch(() => ({ detail: 'Unknown error' }));
         throw new ApiError(res.status, err.detail ?? `HTTP ${res.status}`);
@@ -124,7 +159,7 @@ export async function fetchAnalyticsOverview(orgId?: string): Promise<AnalyticsO
 /** GET /api/v1/analytics/top-codes — top 10 ICD codes by frequency */
 export async function fetchTopCodes(orgId?: string): Promise<AnalyticsTopCodes> {
     const url = orgId ? `${API_BASE}/api/v1/analytics/top-codes?org_id=${orgId}` : `${API_BASE}/api/v1/analytics/top-codes`;
-    const res = await fetch(url);
+    const res = await apiFetch(url);
     if (!res.ok) {
         const err = await res.json().catch(() => ({ detail: 'Unknown error' }));
         throw new ApiError(res.status, err.detail ?? `HTTP ${res.status}`);
@@ -135,7 +170,7 @@ export async function fetchTopCodes(orgId?: string): Promise<AnalyticsTopCodes> 
 /** GET /api/v1/analytics/discrepancy-breakdown — count per discrepancy type */
 export async function fetchDiscrepancyBreakdown(orgId?: string): Promise<DiscrepancyPoint[]> {
     const url = orgId ? `${API_BASE}/api/v1/analytics/discrepancy-breakdown?org_id=${orgId}` : `${API_BASE}/api/v1/analytics/discrepancy-breakdown`;
-    const res = await fetch(url);
+    const res = await apiFetch(url);
     if (!res.ok) {
         const err = await res.json().catch(() => ({ detail: 'Unknown error' }));
         throw new ApiError(res.status, err.detail ?? `HTTP ${res.status}`);
@@ -175,7 +210,7 @@ export interface Claim {
 }
 
 export async function fetchPayers(): Promise<Payer[]> {
-    const res = await fetch(`${API_BASE}/api/v1/claims/payers`);
+    const res = await apiFetch(`${API_BASE}/api/v1/claims/payers`);
     if (!res.ok) {
         const err = await res.json().catch(() => ({ detail: 'Unknown error' }));
         throw new ApiError(res.status, err.detail ?? `HTTP ${res.status}`);
@@ -186,7 +221,7 @@ export async function fetchPayers(): Promise<Payer[]> {
 
 /** GET /api/v1/claims/payers/by-org/{orgId} — resolves the payer record for the logged-in user's org */
 export async function fetchPayerByOrg(orgId: string): Promise<Payer | null> {
-    const res = await fetch(`${API_BASE}/api/v1/claims/payers/by-org/${orgId}`);
+    const res = await apiFetch(`${API_BASE}/api/v1/claims/payers/by-org/${orgId}`);
     if (res.status === 404) return null;
     if (!res.ok) {
         const err = await res.json().catch(() => ({ detail: 'Unknown error' }));
@@ -197,7 +232,7 @@ export async function fetchPayerByOrg(orgId: string): Promise<Payer | null> {
 }
 
 export async function submitClaim(payload: any): Promise<{ claim_id: string }> {
-    const res = await fetch(`${API_BASE}/api/v1/claims/submit`, {
+    const res = await apiFetch(`${API_BASE}/api/v1/claims/submit`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
@@ -212,7 +247,7 @@ export async function submitClaim(payload: any): Promise<{ claim_id: string }> {
 }
 
 export async function fetchClaims(orgId: string): Promise<Claim[]> {
-    const res = await fetch(`${API_BASE}/api/v1/claims/organization/${orgId}`);
+    const res = await apiFetch(`${API_BASE}/api/v1/claims/organization/${orgId}`);
     if (!res.ok) {
         const err = await res.json().catch(() => ({ detail: 'Unknown error' }));
         throw new ApiError(res.status, err.detail ?? `HTTP ${res.status}`);
@@ -222,7 +257,7 @@ export async function fetchClaims(orgId: string): Promise<Claim[]> {
 }
 
 export async function fetchPayerClaims(payerId: string): Promise<Claim[]> {
-    const res = await fetch(`${API_BASE}/api/v1/claims/payer/${payerId}`);
+    const res = await apiFetch(`${API_BASE}/api/v1/claims/payer/${payerId}`);
     if (!res.ok) {
         const err = await res.json().catch(() => ({ detail: 'Unknown error' }));
         throw new ApiError(res.status, err.detail ?? `HTTP ${res.status}`);
@@ -232,7 +267,7 @@ export async function fetchPayerClaims(payerId: string): Promise<Claim[]> {
 }
 
 export async function fetchClaimDetail(claimId: string): Promise<Claim> {
-    const res = await fetch(`${API_BASE}/api/v1/claims/detail/${claimId}`);
+    const res = await apiFetch(`${API_BASE}/api/v1/claims/detail/${claimId}`);
     if (!res.ok) {
         const err = await res.json().catch(() => ({ detail: 'Unknown error' }));
         throw new ApiError(res.status, err.detail ?? `HTTP ${res.status}`);
@@ -242,7 +277,7 @@ export async function fetchClaimDetail(claimId: string): Promise<Claim> {
 }
 
 export async function adjudicateClaim(claimId: string, payload: { action: 'APPROVE' | 'DENY'; payer_responsibility_pct: number; denial_reason?: string }): Promise<any> {
-    const res = await fetch(`${API_BASE}/api/v1/claims/adjudicate/${claimId}`, {
+    const res = await apiFetch(`${API_BASE}/api/v1/claims/adjudicate/${claimId}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
@@ -255,7 +290,7 @@ export async function adjudicateClaim(claimId: string, payload: { action: 'APPRO
 }
 
 export async function appealClaim(claimId: string, justification: string): Promise<any> {
-    const res = await fetch(`${API_BASE}/api/v1/claims/appeal/${claimId}`, {
+    const res = await apiFetch(`${API_BASE}/api/v1/claims/appeal/${claimId}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ justification }),
@@ -287,7 +322,7 @@ export interface PayerEditPayload {
 
 /** POST /api/v1/claims/edit/{claimId} — saves payer code corrections before approval */
 export async function payerEditClaim(claimId: string, payload: PayerEditPayload): Promise<{ status: string; message: string; edit_id: string | null }> {
-    const res = await fetch(`${API_BASE}/api/v1/claims/edit/${claimId}`, {
+    const res = await apiFetch(`${API_BASE}/api/v1/claims/edit/${claimId}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
@@ -331,7 +366,7 @@ export interface PayerSettings {
 
 /** GET /api/v1/payers/{payerId}/settings */
 export async function getPayerSettings(payerId: string): Promise<PayerSettings> {
-    const res = await fetch(`${API_BASE}/api/v1/payers/${payerId}/settings`);
+    const res = await apiFetch(`${API_BASE}/api/v1/payers/${payerId}/settings`);
     if (!res.ok) {
         const err = await res.json().catch(() => ({ detail: 'Unknown error' }));
         throw new ApiError(res.status, err.detail ?? `HTTP ${res.status}`);
@@ -344,7 +379,7 @@ export async function updatePayerSettings(
     payerId: string,
     payload: Omit<PayerSettings, 'payer_id'>,
 ): Promise<PayerSettings> {
-    const res = await fetch(`${API_BASE}/api/v1/payers/${payerId}/settings`, {
+    const res = await apiFetch(`${API_BASE}/api/v1/payers/${payerId}/settings`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),

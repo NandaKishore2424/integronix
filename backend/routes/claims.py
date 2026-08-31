@@ -1,13 +1,14 @@
 import uuid
 from fastapi import APIRouter, HTTPException, Depends, Header
-from pydantic import BaseModel
-from typing import Optional, List, Any
+from pydantic import BaseModel, Field
+from typing import Optional, List, Any, Literal
 from supabase import create_client, Client
 from logger import get_logger
 from config import settings
 from services.payer_policy_gate import run_payer_policy_gate
 from services.org_settings_service import get_org_settings
 from services.fhir_claim_builder import build_fhir_claim_proposal
+from auth import Principal, get_principal, require_roles, require_payer_org
 
 log = get_logger(__name__)
 router = APIRouter(prefix="/claims", tags=["claims"])
@@ -18,6 +19,45 @@ def get_supabase(authorization: Optional[str] = Header(None)) -> Client:
     key = settings.supabase_service_key or settings.supabase_anon_key
     return create_client(url, key)
 
+# ── Tenant boundary helpers ───────────────────────────────────────────────────
+
+def _payer_ids_for_org(supabase, org_id: str) -> set[str]:
+    """The payer records owned by a payer organization (payers.organization_id)."""
+    try:
+        res = getattr(
+            supabase.table("payers").select("id").eq("organization_id", org_id), "execute"
+        )()
+        return {str(r["id"]) for r in (getattr(res, "data", None) or [])}
+    except Exception as exc:
+        log.error("payer_ids_lookup_failed", org_id=org_id, error=str(exc))
+        return set()
+
+
+def _assert_claim_access(claim: dict, principal: Principal, supabase) -> None:
+    """
+    Confirm the caller may see this claim.
+
+    A hospital user may access claims belonging to their own organization.
+    A payer user may access claims routed to a payer their organization owns.
+    Anything else is 404 rather than 403 — a claim's existence is itself
+    information the caller is not entitled to.
+    """
+    if principal.is_payer:
+        allowed = _payer_ids_for_org(supabase, principal.organization_id)
+        if str(claim.get("payer_id") or "") in allowed:
+            return
+    elif str(claim.get("organization_id") or "") == str(principal.organization_id):
+        return
+
+    log.warning(
+        "claim_access_denied",
+        auth_id=principal.auth_id,
+        claim_id=claim.get("id"),
+        caller_org=principal.organization_id,
+    )
+    raise HTTPException(status_code=404, detail="Claim not found")
+
+
 class ClaimSubmissionRequest(BaseModel):
     session_id: str
     organization_id: str
@@ -25,18 +65,25 @@ class ClaimSubmissionRequest(BaseModel):
     patient_name: Optional[str] = None
     patient_dob: Optional[str] = None
     patient_sex: Optional[str] = None
-    total_billed_amount: float
+    total_billed_amount: float = Field(ge=0, le=100_000_000)
     claim_data: dict
     submission_notes: Optional[str] = None
 
 @router.post("/submit")
-async def submit_claim(req: ClaimSubmissionRequest):
+async def submit_claim(
+    req: ClaimSubmissionRequest,
+    principal: Principal = Depends(require_roles("coder", "rcm", "admin")),
+):
     """
     Submits a finalized coding session as a Claim to the Payer.
+
+    The organization is taken from the caller's token; a mismatched
+    organization_id in the body is rejected rather than honoured.
     """
+    org_id = principal.assert_org(req.organization_id)
     supabase = get_supabase()
-    
-    log.info("claims_submit_start", session_id=req.session_id, org_id=req.organization_id)
+
+    log.info("claims_submit_start", session_id=req.session_id, org_id=org_id)
     
     # Check if a claim already exists for this session to prevent double billing
     try:
@@ -59,13 +106,13 @@ async def submit_claim(req: ClaimSubmissionRequest):
                 "auto_approve_payer_responsibility_pct, accepted_icd_versions"
             )
             .eq("id", req.payer_id)
-            .single(),
+            .maybe_single(),
             "execute",
         )()
         # Supabase client returns a response object with `.data`
         payer_policy = None
         if payer_policy_resp and getattr(payer_policy_resp, "data", None):
-            # `.single()` typically returns an object (not a list), but handle both.
+            # `.maybe_single()` typically returns an object (not a list), but handle both.
             if isinstance(payer_policy_resp.data, list):
                 payer_policy = payer_policy_resp.data[0] if payer_policy_resp.data else None
             else:
@@ -97,7 +144,7 @@ async def submit_claim(req: ClaimSubmissionRequest):
             _payer_name = (payer_policy or {}).get("name") or req.payer_id
             try:
                 _org_resp = getattr(
-                    supabase.table("organizations").select("name").eq("id", req.organization_id).single(),
+                    supabase.table("organizations").select("name").eq("id", req.organization_id).maybe_single(),
                     "execute",
                 )()
                 if _org_resp and getattr(_org_resp, "data", None):
@@ -215,7 +262,8 @@ async def submit_claim(req: ClaimSubmissionRequest):
 
 
 @router.get("/organization/{org_id}")
-async def list_claims(org_id: str):
+async def list_claims(org_id: str, principal: Principal = Depends(get_principal)):
+    org_id = principal.assert_org(org_id)
     """
     Retrieves the claims inbox for a specific organization/hospital.
     """
@@ -233,7 +281,18 @@ async def list_claims(org_id: str):
         raise HTTPException(status_code=500, detail="Failed to fetch claims list.")
 
 @router.get("/payer/{payer_id}")
-async def list_payer_claims(payer_id: str):
+async def list_payer_claims(
+    payer_id: str,
+    principal: Principal = Depends(require_payer_org()),
+):
+    if payer_id not in _payer_ids_for_org(get_supabase(), principal.organization_id):
+        log.warning(
+            "payer_queue_denied",
+            auth_id=principal.auth_id,
+            requested_payer=payer_id,
+            caller_org=principal.organization_id,
+        )
+        raise HTTPException(status_code=404, detail="Payer not found")
     """
     Retrieves the global claims inbox array for a specific Payer (Insurance Company).
     Includes the organization/hospital name that submitted the claim.
@@ -252,12 +311,13 @@ async def list_payer_claims(payer_id: str):
         raise HTTPException(status_code=500, detail="Failed to fetch payer claims list.")
 
 @router.get("/detail/{claim_id}")
-async def get_claim_detail(claim_id: str):
+async def get_claim_detail(claim_id: str, principal: Principal = Depends(get_principal)):
     """Fetches a single claim detail payload for the Adjudication Screen"""
     supabase = get_supabase()
     try:
-        res = getattr(supabase.table("claims").select("*, organizations(name), claim_audit_logs(*)").eq("id", claim_id).single(), "execute")()
+        res = getattr(supabase.table("claims").select("*, organizations(name), claim_audit_logs(*)").eq("id", claim_id).maybe_single(), "execute")()
         if res and res.data:
+            _assert_claim_access(res.data, principal, supabase)
             return {"claim": res.data}
         raise HTTPException(status_code=404, detail="Claim not found")
     except HTTPException:
@@ -267,7 +327,7 @@ async def get_claim_detail(claim_id: str):
         raise HTTPException(status_code=500, detail="Failed to fetch claim detail")
 
 @router.get("/payers")
-async def list_payers():
+async def list_payers(principal: Principal = Depends(get_principal)):
     """
     Returns the list of enabled payers so the frontend can populate a dropdown
     when the medical coder wants to submit a claim.
@@ -282,7 +342,8 @@ async def list_payers():
         raise HTTPException(status_code=500, detail="Failed to fetch payers.")
 
 @router.get("/payers/by-org/{org_id}")
-async def get_payer_for_org(org_id: str):
+async def get_payer_for_org(org_id: str, principal: Principal = Depends(get_principal)):
+    org_id = principal.assert_org(org_id)
     """
     Resolves the payer record for a given organization by its organization_id.
     If an insurance_payer logs in for the first time, auto-creates a payer configured for them.
@@ -290,7 +351,7 @@ async def get_payer_for_org(org_id: str):
     supabase = get_supabase()
     try:
         org_res = getattr(
-            supabase.table("organizations").select("id, name, type").eq("id", org_id).single(),
+            supabase.table("organizations").select("id, name, type").eq("id", org_id).maybe_single(),
             "execute"
         )()
         if not org_res or not org_res.data:
@@ -335,12 +396,19 @@ async def get_payer_for_org(org_id: str):
         raise HTTPException(status_code=500, detail="Failed to resolve payer for organization.")
 
 class AdjudicationRequest(BaseModel):
-    action: str  # e.g., 'APPROVE', 'DENY'
+    action: Literal["APPROVE", "DENY"]
     denial_reason: Optional[str] = None
-    payer_responsibility_pct: float = 0.80  # Default 80% payer, 20% patient
+    # Share of the allowed amount the payer covers. Bounded: an unbounded value
+    # here produces payments above the allowed amount and negative patient
+    # responsibility.
+    payer_responsibility_pct: float = Field(default=0.80, ge=0.0, le=1.0)
 
 @router.post("/adjudicate/{claim_id}")
-async def adjudicate_claim(claim_id: str, req: AdjudicationRequest):
+async def adjudicate_claim(
+    claim_id: str,
+    req: AdjudicationRequest,
+    principal: Principal = Depends(require_payer_org()),
+):
     """
     Simulates a Payer adjudicating (processing) a submitted claim.
     Calculates the 'Allowed Amount' based on the Payer's contract multiplier,
@@ -352,11 +420,12 @@ async def adjudicate_claim(claim_id: str, req: AdjudicationRequest):
     
     try:
         # 1. Fetch the claim and its associated payer details
-        res = getattr(supabase.table("claims").select("*, payers(base_allowed_multiplier)").eq("id", claim_id).single(), "execute")()
+        res = getattr(supabase.table("claims").select("*, payers(base_allowed_multiplier)").eq("id", claim_id).maybe_single(), "execute")()
         if not res or not res.data:
             raise HTTPException(status_code=404, detail="Claim not found")
             
         claim = res.data
+        _assert_claim_access(claim, principal, supabase)
         if claim["status"] in ["PAID", "DENIED", "PARTIALLY_PAID"]:
             raise HTTPException(status_code=400, detail=f"Claim is already {claim['status']}")
             
@@ -443,7 +512,11 @@ class AppealRequest(BaseModel):
     justification: str
 
 @router.post("/appeal/{claim_id}")
-async def appeal_claim(claim_id: str, req: AppealRequest):
+async def appeal_claim(
+    claim_id: str,
+    req: AppealRequest,
+    principal: Principal = Depends(require_roles("rcm", "admin")),
+):
     """
     Allows a Hospital Biller to appeal a Denied or Partially Paid claim by providing justification.
     """
@@ -452,11 +525,12 @@ async def appeal_claim(claim_id: str, req: AppealRequest):
 
     try:
         # 1. Fetch the claim
-        res = getattr(supabase.table("claims").select("*, payers(name)").eq("id", claim_id).single(), "execute")()
+        res = getattr(supabase.table("claims").select("*, payers(name)").eq("id", claim_id).maybe_single(), "execute")()
         if not res or not res.data:
             raise HTTPException(status_code=404, detail="Claim not found")
 
         claim = res.data
+        _assert_claim_access(claim, principal, supabase)
         if claim["status"] not in ["DENIED", "PARTIALLY_PAID"]:
             raise HTTPException(status_code=400, detail=f"Cannot appeal a claim in {claim['status']} status. Must be DENIED or PARTIALLY_PAID.")
 
@@ -506,7 +580,11 @@ class PayerEditRequest(BaseModel):
 
 
 @router.post("/edit/{claim_id}")
-async def payer_edit_claim(claim_id: str, req: PayerEditRequest):
+async def payer_edit_claim(
+    claim_id: str,
+    req: PayerEditRequest,
+    principal: Principal = Depends(require_payer_org()),
+):
     """
     Allows a Payer adjudicator to correct the hospital-proposed ICD/CPT codes before approving.
     - Stores the original codes vs. corrected codes in payer_code_edits for a full audit trail.
@@ -524,15 +602,16 @@ async def payer_edit_claim(claim_id: str, req: PayerEditRequest):
         # 1. Fetch the claim — must be in SUBMITTED status
         res = getattr(
             supabase.table("claims")
-            .select("id, status, claim_data")
+            .select("id, status, claim_data, organization_id, payer_id")
             .eq("id", claim_id)
-            .single(),
+            .maybe_single(),
             "execute",
         )()
         if not res or not res.data:
             raise HTTPException(status_code=404, detail="Claim not found")
 
         claim = res.data
+        _assert_claim_access(claim, principal, supabase)
         if claim["status"] != "SUBMITTED":
             raise HTTPException(
                 status_code=400,
@@ -616,7 +695,7 @@ from fastapi.responses import PlainTextResponse
 from services.edi_837_builder import build_edi_837
 
 @router.get("/export/edi/{claim_id}", response_class=PlainTextResponse)
-async def export_edi_837(claim_id: str):
+async def export_edi_837(claim_id: str, principal: Principal = Depends(get_principal)):
     """
     Generates a real ANSI ASC X12 837P EDI Health Care Claim string derived
     from the FHIR Claim proposal stored in ``claim_data.fhir_claim_proposal``.
@@ -630,13 +709,14 @@ async def export_edi_837(claim_id: str):
             supabase.table("claims")
             .select("*, organizations(name), payers(name, payer_type)")
             .eq("id", claim_id)
-            .single(),
+            .maybe_single(),
             "execute",
         )()
         if not res or not res.data:
             raise HTTPException(status_code=404, detail="Claim not found")
 
         claim = res.data
+        _assert_claim_access(claim, principal, supabase)
         org_name   = (claim.get("organizations") or {}).get("name") or "INTEGRONIX HOSPITAL"
         payer_name = (claim.get("payers") or {}).get("name") or "UNKNOWN PAYER"
         total_billed = float(claim.get("total_billed_amount") or 0.0)
@@ -729,7 +809,7 @@ _EDI_835_ALLOWED_STATUSES = {"PAID", "PARTIALLY_PAID", "DENIED"}
 
 
 @router.get("/export/edi835/{claim_id}", response_class=PlainTextResponse)
-async def export_edi_835(claim_id: str):
+async def export_edi_835(claim_id: str, principal: Principal = Depends(get_principal)):
     """
     Generates a real ANSI ASC X12 835 Remittance Advice EDI file.
 
@@ -743,13 +823,14 @@ async def export_edi_835(claim_id: str):
             supabase.table("claims")
             .select("*, organizations(name), payers(name)")
             .eq("id", claim_id)
-            .single(),
+            .maybe_single(),
             "execute",
         )()
         if not res or not res.data:
             raise HTTPException(status_code=404, detail="Claim not found")
 
         claim = res.data
+        _assert_claim_access(claim, principal, supabase)
         status = claim.get("status", "")
         if status not in _EDI_835_ALLOWED_STATUSES:
             raise HTTPException(

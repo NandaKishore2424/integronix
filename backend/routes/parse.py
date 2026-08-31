@@ -5,12 +5,14 @@ POST /upload  → accepts PDF, returns session_id + raw extracted text
 POST /parse   → accepts raw_text, returns structured ExtractionResult JSON
 """
 import uuid
-from fastapi import APIRouter, UploadFile, File, HTTPException, Body
+from fastapi import APIRouter, UploadFile, File, HTTPException, Body, Depends
 from pydantic import BaseModel
 
 from services.pdf_service import extract_text_from_pdf
 from services.extraction_service import extract_clinical_entities
 from models import ExtractionResult
+
+from auth import Principal, require_roles
 
 router = APIRouter(prefix="/parse", tags=["Clinical Extraction"])
 
@@ -45,7 +47,10 @@ class ParseResponse(BaseModel):
     response_model=UploadResponse,
     summary="Upload a clinical PDF and extract raw text",
 )
-async def upload_document(file: UploadFile = File(...)):
+async def upload_document(
+    file: UploadFile = File(...),
+    principal: Principal = Depends(require_roles("coder", "rcm", "admin")),
+):
     """
     Step 1: Upload a PDF clinical document.
     Returns raw extracted text and a session_id for downstream processing.
@@ -84,7 +89,10 @@ async def upload_document(file: UploadFile = File(...)):
     response_model=ParseResponse,
     summary="Extract structured clinical entities from raw text using Groq LLM",
 )
-async def parse_clinical_text(body: ParseRequest):
+async def parse_clinical_text(
+    body: ParseRequest,
+    principal: Principal = Depends(require_roles("coder", "rcm", "admin")),
+):
     """
     Step 2: Extract structured clinical entities from raw text.
     Calls Groq LLM with a strict prompt. Returns validated ExtractionResult.

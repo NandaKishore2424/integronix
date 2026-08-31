@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from typing import Any, List, Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel, Field
 from supabase import create_client
 
@@ -19,7 +19,36 @@ from config import settings
 from logger import get_logger
 
 log = get_logger(__name__)
+from auth import Principal, get_principal, require_payer_org
+
 router = APIRouter(prefix="/payers", tags=["payers"])
+
+
+def _assert_owns_payer(principal: Principal, payer_id: str, sb) -> None:
+    """
+    A payer organization may only read or modify its own payer record.
+
+    These settings gate auto-approval — confidence floors, risk ceilings, the
+    payer responsibility percentage — so write access here is equivalent to
+    control over disbursement.
+    """
+    try:
+        res = sb.table("payers").select("id").eq("id", payer_id).eq(
+            "organization_id", principal.organization_id
+        ).limit(1).execute()
+        if getattr(res, "data", None):
+            return
+    except Exception as exc:
+        log.error("payer_ownership_check_failed", payer_id=payer_id, error=str(exc))
+        raise HTTPException(status_code=503, detail="Could not verify payer access.")
+
+    log.warning(
+        "payer_settings_denied",
+        auth_id=principal.auth_id,
+        requested_payer=payer_id,
+        caller_org=principal.organization_id,
+    )
+    raise HTTPException(status_code=404, detail=f"Payer '{payer_id}' not found.")
 
 
 # ── helpers ──────────────────────────────────────────────────────────────────
@@ -78,11 +107,15 @@ SETTINGS_SELECT = (
 
 
 @router.get("/{payer_id}/settings", response_model=PayerSettingsOut)
-async def get_payer_settings(payer_id: str) -> PayerSettingsOut:
+async def get_payer_settings(
+    payer_id: str,
+    principal: Principal = Depends(require_payer_org()),
+) -> PayerSettingsOut:
     """
     Returns the full automation policy for the requested payer organisation.
     """
     sb = _sb()
+    _assert_owns_payer(principal, payer_id, sb)
     try:
         resp = sb.table("payers").select(SETTINGS_SELECT).eq("id", payer_id).limit(1).execute()
     except Exception as exc:
@@ -107,7 +140,11 @@ async def get_payer_settings(payer_id: str) -> PayerSettingsOut:
 
 
 @router.put("/{payer_id}/settings", response_model=PayerSettingsOut)
-async def update_payer_settings(payer_id: str, body: PayerSettingsIn) -> PayerSettingsOut:
+async def update_payer_settings(
+    payer_id: str,
+    body: PayerSettingsIn,
+    principal: Principal = Depends(require_payer_org()),
+) -> PayerSettingsOut:
     """
     Persists updated automation policy for a payer.
     Only payer admins should be allowed to call this from the dashboard.
@@ -115,6 +152,7 @@ async def update_payer_settings(payer_id: str, body: PayerSettingsIn) -> PayerSe
     sb = _sb()
 
     # Confirm the record exists before patching
+    _assert_owns_payer(principal, payer_id, sb)
     check = sb.table("payers").select("id").eq("id", payer_id).limit(1).execute()
     if not check.data:
         raise HTTPException(status_code=404, detail=f"Payer '{payer_id}' not found.")
