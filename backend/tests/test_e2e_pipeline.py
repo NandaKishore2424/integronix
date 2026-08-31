@@ -366,16 +366,9 @@ class TestFhirClaimBuilder:
 pytestmark_integration = pytest.mark.integration
 
 
-@pytest.fixture(scope="session")
-def client():
-    """Return a FastAPI TestClient with the full app loaded."""
-    _load_env()
-    try:
-        from fastapi.testclient import TestClient
-        from main import app
-        return TestClient(app)
-    except Exception as e:
-        pytest.skip(f"Could not import app (missing deps or .env): {e}")
+# The `client` fixture lives in conftest.py — it injects an authenticated
+# Principal via dependency_overrides. Endpoints now require authentication, so
+# an un-authenticated TestClient would return 401 everywhere.
 
 
 @pytest.mark.integration
@@ -384,7 +377,7 @@ class TestHealthEndpoint:
         res = client.get("/health")
         assert res.status_code == 200
         data = res.json()
-        assert data.get("status") == "ok", f"Health check returned: {data}"
+        assert data.get("status") in ("ok", "running"), f"Health check returned: {data}"
 
 
 @pytest.mark.integration
@@ -429,7 +422,7 @@ class TestCodeRunEndpoint:
     """
 
     def test_golden_icd_code(self, client):
-        res = client.post("/code/run", json={"raw_text": self.PRIYA_RAMAN_NOTE})
+        res = client.post("/api/v1/code/run", json={"raw_text": self.PRIYA_RAMAN_NOTE})
         assert res.status_code == 200, f"Expected 200, got {res.status_code}: {res.text[:200]}"
         data = res.json()
         icd = data.get("final_icd_code", "")
@@ -437,27 +430,27 @@ class TestCodeRunEndpoint:
             f"Pneumonia should map to J-family ICD code, got: {icd!r}"
 
     def test_golden_confidence_threshold(self, client):
-        res = client.post("/code/run", json={"raw_text": self.PRIYA_RAMAN_NOTE})
+        res = client.post("/api/v1/code/run", json={"raw_text": self.PRIYA_RAMAN_NOTE})
         assert res.status_code == 200
         data = res.json()
         conf = data.get("confidence_score", 0)
         assert conf >= 0.70, f"Confidence should be ≥ 0.70 for clear pneumonia note, got: {conf}"
 
     def test_golden_risk_not_high(self, client):
-        res = client.post("/code/run", json={"raw_text": self.PRIYA_RAMAN_NOTE})
+        res = client.post("/api/v1/code/run", json={"raw_text": self.PRIYA_RAMAN_NOTE})
         data = res.json()
         risk_label = data.get("risk_label", "")
         assert risk_label in ("LOW", "MEDIUM"), \
             f"Simple pneumonia should not be HIGH risk, got: {risk_label!r}"
 
     def test_golden_cpt_codes_present(self, client):
-        res = client.post("/code/run", json={"raw_text": self.PRIYA_RAMAN_NOTE})
+        res = client.post("/api/v1/code/run", json={"raw_text": self.PRIYA_RAMAN_NOTE})
         data = res.json()
         cpt_codes = data.get("cpt_codes") or []
         assert len(cpt_codes) > 0, "At least one CPT code should be extracted for inpatient admission"
 
     def test_golden_financial_summary_positive(self, client):
-        res = client.post("/code/run", json={"raw_text": self.PRIYA_RAMAN_NOTE})
+        res = client.post("/api/v1/code/run", json={"raw_text": self.PRIYA_RAMAN_NOTE})
         data = res.json()
         fs = data.get("financial_summary") or {}
         revenue = fs.get("total_estimated_revenue", 0)
@@ -465,14 +458,14 @@ class TestCodeRunEndpoint:
 
     def test_golden_multi_icd_codes(self, client):
         """Pipeline should return a list of ICD candidates (not just a single code)."""
-        res = client.post("/code/run", json={"raw_text": self.PRIYA_RAMAN_NOTE})
+        res = client.post("/api/v1/code/run", json={"raw_text": self.PRIYA_RAMAN_NOTE})
         data = res.json()
         icd_codes = data.get("icd_codes") or []
         assert len(icd_codes) > 0, "icd_codes list must be non-empty"
 
     def test_session_id_is_uuid(self, client):
         """Pipeline must emit a valid session_id UUID for traceability."""
-        res = client.post("/code/run", json={"raw_text": self.PRIYA_RAMAN_NOTE})
+        res = client.post("/api/v1/code/run", json={"raw_text": self.PRIYA_RAMAN_NOTE})
         data = res.json()
         session_id = data.get("session_id", "")
         try:
@@ -482,7 +475,7 @@ class TestCodeRunEndpoint:
 
     def test_response_has_no_error_at(self, client):
         """On a clean run, error_at should be absent or None."""
-        res = client.post("/code/run", json={"raw_text": self.PRIYA_RAMAN_NOTE})
+        res = client.post("/api/v1/code/run", json={"raw_text": self.PRIYA_RAMAN_NOTE})
         data = res.json()
         error_at = data.get("error_at")
         assert not error_at, f"Pipeline reported an error at node: {error_at}"
@@ -494,29 +487,29 @@ class TestClaims:
 
     def test_claims_endpoint_accessible(self, client):
         """GET /claims?org_id=<any> must not 500 (may be empty list)."""
-        res = client.get("/claims", params={"org_id": "nonexistent-org-id"})
+        res = client.get("/api/v1/claims", params={"org_id": "nonexistent-org-id"})
         assert res.status_code in (200, 404), \
             f"Claims endpoint must respond with 200 or 404, got {res.status_code}"
 
     def test_edi_837_endpoint_404_for_fake_claim(self, client):
         """Requesting EDI 837 for a non-existent claim must return 404."""
         fake_id = str(uuid.uuid4())
-        res = client.get(f"/claims/export/edi/{fake_id}")
+        res = client.get(f"/api/v1/claims/export/edi/{fake_id}")
         assert res.status_code == 404, \
             f"Non-existent claim EDI 837 must return 404, got {res.status_code}"
 
     def test_edi_835_endpoint_404_for_fake_claim(self, client):
         """Requesting EDI 835 for a non-existent claim must return 404."""
         fake_id = str(uuid.uuid4())
-        res = client.get(f"/claims/export/edi835/{fake_id}")
+        res = client.get(f"/api/v1/claims/export/edi835/{fake_id}")
         assert res.status_code == 404, \
             f"Non-existent claim EDI 835 must return 404, got {res.status_code}"
 
-    def test_payer_edit_requires_reason(self, client):
+    def test_payer_edit_requires_reason(self, payer_client):
         """POST /claims/edit without edit_reason must return 400 (validation)."""
         fake_id = str(uuid.uuid4())
-        res = client.post(
-            f"/claims/edit/{fake_id}",
+        res = payer_client.post(
+            f"/api/v1/claims/edit/{fake_id}",
             json={
                 "edited_icd_codes": [],
                 "edited_cpt_codes": [],

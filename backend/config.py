@@ -15,6 +15,28 @@ class Settings(BaseSettings):
     supabase_anon_key: str
     supabase_service_key: str = ""   # Optional — needed for bypassing RLS
 
+    # ── Authentication ───────────────────────────────────────────────────────
+    # Project JWT secret (Supabase → Settings → API → JWT Secret). When set,
+    # tokens are verified locally with no network call. When blank, auth.py
+    # falls back to the Supabase Auth API, which is slower but always correct.
+    supabase_jwt_secret: str = ""
+
+    # Master switch for request authentication. Never disable outside local
+    # development — auth.get_principal refuses to honour it when app_env is
+    # "production".
+    auth_enabled: bool = True
+
+    # Organization used for the synthetic principal when auth_enabled is false.
+    dev_org_id: str = ""
+
+    # Forward the caller's JWT to PostgREST so the RLS policies in
+    # 006_audit_and_security.sql enforce tenant isolation at the database
+    # layer. Requires migration 020 (which populates app_metadata with
+    # organization_id) AND users to have re-authenticated since it ran —
+    # otherwise current_user_org_id() returns NULL and every policy denies.
+    # Application-layer checks in auth.Principal.assert_org apply either way.
+    db_forward_user_jwt: bool = False
+
     # ── Groq LLM ─────────────────────────────────────────────────────────────
     groq_api_key: str
     groq_model: str = "llama-3.3-70b-versatile"

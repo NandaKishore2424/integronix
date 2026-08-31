@@ -15,13 +15,14 @@ routes/code.py — Full Pipeline Endpoints
   Node 8: risk_scoring      → risk label + DB writes
 """
 import uuid
-from fastapi import APIRouter, HTTPException, UploadFile, File, Form
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
 from typing import Optional, List
 from agents.graph import build_integronix_graph, CodingState
 from models import CodeRequest, CodeResponse
 from config import settings
 from logger import get_logger
 from services.org_settings_service import get_org_settings
+from auth import Principal, require_roles
 
 log = get_logger(__name__)
 
@@ -136,9 +137,11 @@ async def _run_pipeline(initial_state: CodingState, session_id: str) -> CodeResp
         )
     except Exception as e:
         log.error("pipeline_failed", session_id=session_id, error=str(e))
+        # The exception text can carry prompt content, row data or connection
+        # detail. Log it; hand the caller only a correlation id.
         raise HTTPException(
             status_code=500,
-            detail=f"Pipeline failed: {str(e)}",
+            detail=f"Pipeline failed. Reference: {session_id}",
         )
 
     icd_codes = result.get("icd_codes") or []
@@ -196,7 +199,10 @@ async def _run_pipeline(initial_state: CodingState, session_id: str) -> CodeResp
     response_model=CodeResponse,
     summary="Run full ICD coding pipeline on raw clinical text",
 )
-async def run_full_pipeline(body: CodeRequest):
+async def run_full_pipeline(
+    body: CodeRequest,
+    principal: Principal = Depends(require_roles("coder", "rcm", "admin")),
+):
     """
     Full 8-node LangGraph pipeline — accepts raw clinical text (JSON).
     """
@@ -208,7 +214,11 @@ async def run_full_pipeline(body: CodeRequest):
 
     session_id = body.session_id or str(uuid.uuid4())
 
-    org_settings = await get_org_settings(body.org_id) if body.org_id else None
+    # Tenant comes from the verified token. A body org_id that disagrees is a
+    # cross-tenant attempt, not a hint.
+    org_id = principal.assert_org(body.org_id)
+
+    org_settings = await get_org_settings(org_id) if org_id else None
     icd_version = (org_settings or {}).get("icd_version") or settings.who_icd_default_version
     claim_scheme = (org_settings or {}).get("claim_scheme")
     coding_mode = (org_settings or {}).get("coding_mode")
@@ -218,7 +228,7 @@ async def run_full_pipeline(body: CodeRequest):
         "raw_text":       body.raw_text.strip(),
         "human_icd_code": body.human_icd_code,
         "pdf_bytes":      None,
-        "org_id":         body.org_id,
+        "org_id":         org_id,
         "icd_version":    icd_version,
         "claim_scheme":   claim_scheme,
         "coding_mode":    coding_mode,
@@ -245,6 +255,7 @@ async def run_pdf_pipeline(
     human_icd_code: Optional[str] = Form(None, description="Existing ICD-10 code for audit comparison"),
     session_id: Optional[str] = Form(None),
     org_id: Optional[str] = Form(None, description="Organization ID"),
+    principal: Principal = Depends(require_roles("coder", "rcm", "admin")),
 ):
     """
     Full 8-node LangGraph pipeline — accepts a PDF file via multipart/form-data.
@@ -274,6 +285,7 @@ async def run_pdf_pipeline(
 
     session_id = session_id or str(uuid.uuid4())
 
+    org_id = principal.assert_org(org_id)
     org_settings = await get_org_settings(org_id) if org_id else None
     icd_version = (org_settings or {}).get("icd_version") or settings.who_icd_default_version
     claim_scheme = (org_settings or {}).get("claim_scheme")

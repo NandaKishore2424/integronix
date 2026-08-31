@@ -63,24 +63,27 @@ async def financial_calculator_node(state: CodingState) -> CodingState:
         }
         return state
 
-    # Retrieve the org multiplier from the database
-    supabase: Client = create_client(settings.supabase_url, settings.supabase_service_key or settings.supabase_anon_key)
-
-    # Note: org_id is passed in from the initial request state (added in Phase 3)
-    # For now, we look up the FIRST org in settings as a safe demo fallback.
+    # Retrieve the org multiplier from the database.
+    #
+    # When no org_id is present we fall back to DEFAULT_MULTIPLIER, never to
+    # another organization's rate. An earlier version read the first row of
+    # org_settings here, which silently priced one hospital's encounter using
+    # a different tenant's multiplier — wrong money, and a tenant boundary
+    # crossing, with nothing in the output to indicate it had happened.
     org_id = state.get("org_id")
     if org_id:
+        supabase: Client = create_client(
+            settings.supabase_url,
+            settings.supabase_service_key or settings.supabase_anon_key,
+        )
         multiplier = _get_org_multiplier(supabase, org_id)
     else:
-        # Demo fallback: use the first org's multiplier for the prototype
-        try:
-            resp = supabase.table("org_settings").select("organization_id, cpt_pricing_multiplier").limit(1).execute()
-            if resp.data:
-                multiplier = float(resp.data[0]["cpt_pricing_multiplier"])
-            else:
-                multiplier = DEFAULT_MULTIPLIER
-        except Exception:
-            multiplier = DEFAULT_MULTIPLIER
+        log.warning(
+            "financial_calc_no_org_using_default",
+            session_id=session_id,
+            multiplier=DEFAULT_MULTIPLIER,
+        )
+        multiplier = DEFAULT_MULTIPLIER
 
     log.info("financial_calc_started", session_id=session_id, multiplier=multiplier, cpt_count=len(cpt_codes))
 

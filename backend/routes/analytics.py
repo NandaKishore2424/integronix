@@ -8,7 +8,7 @@ routes/analytics.py — Org-level Analytics API (Phase 6C)
 All aggregates are computed in Python over raw rows from coding_results.
 No stored procedures needed — keeps the logic visible and testable.
 """
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
 from collections import defaultdict, Counter
 from datetime import datetime, timezone, timedelta
 from database import select
@@ -20,6 +20,8 @@ from logger import get_logger
 
 log = get_logger(__name__)
 
+from auth import Principal, get_principal
+
 router = APIRouter(prefix="/analytics", tags=["Analytics"])
 
 
@@ -30,7 +32,7 @@ router = APIRouter(prefix="/analytics", tags=["Analytics"])
     response_model=AnalyticsOverview,
     summary="KPI cards + 30-day daily case trend",
 )
-async def get_analytics_overview():
+async def get_analytics_overview(principal: Principal = Depends(get_principal)):
     """
     Returns:
       - KPI cards: total cases, revenue recovered, avg confidence, high-risk rate
@@ -47,6 +49,7 @@ async def get_analytics_overview():
                 "confidence_score,created_at,"
                 "clinical_cases(document_source)"
             ),
+            filters={"organization_id": f"eq.{principal.organization_id}"},
         )
     except Exception as e:
         log.error("analytics_overview_failed", error=str(e))
@@ -129,7 +132,7 @@ async def get_analytics_overview():
     response_model=AnalyticsTopCodes,
     summary="Top 10 AI-assigned ICD codes by frequency",
 )
-async def get_top_codes():
+async def get_top_codes(principal: Principal = Depends(get_principal)):
     """
     Counts how many times each ai_icd_code has been assigned.
     Returns top 10 with avg revenue delta and avg risk score.
@@ -139,6 +142,7 @@ async def get_top_codes():
         rows = await select(
             "coding_results",
             query="ai_icd_code,financial_delta,risk_score,risk_label,discrepancy_type",
+            filters={"organization_id": f"eq.{principal.organization_id}"},
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Top codes query failed: {str(e)}")
@@ -180,12 +184,16 @@ async def get_top_codes():
     "/discrepancy-breakdown",
     summary="Count of each discrepancy type (for pie / donut chart)",
 )
-async def get_discrepancy_breakdown():
+async def get_discrepancy_breakdown(principal: Principal = Depends(get_principal)):
     """
     Returns count per discrepancy_type for the doughnut chart.
     """
     try:
-        rows = await select("coding_results", query="discrepancy_type")
+        rows = await select(
+            "coding_results",
+            query="discrepancy_type",
+            filters={"organization_id": f"eq.{principal.organization_id}"},
+        )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Discrepancy query failed: {str(e)}")
 

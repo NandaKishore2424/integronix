@@ -9,8 +9,17 @@ log = get_logger(__name__)
 _client: httpx.AsyncClient | None = None
 
 
-def _headers() -> dict:
-    key = settings.supabase_service_key or settings.supabase_anon_key
+def _headers(user_token: str | None = None) -> dict:
+    """
+    Build PostgREST headers.
+
+    With `user_token`, the request runs as that user and the RLS policies in
+    006_audit_and_security.sql apply. Without one, it runs as the service role
+    and bypasses RLS — correct for shared ontology tables (icd_codes, snomed_*,
+    cpt_hcpcs_codes) and for the auth lookup that establishes which tenant a
+    caller belongs to, and wrong for anything tenant-scoped.
+    """
+    key = user_token or settings.supabase_service_key or settings.supabase_anon_key
     return {
         "apikey": settings.supabase_anon_key,
         "Authorization": f"Bearer {key}",
@@ -19,6 +28,7 @@ def _headers() -> dict:
 
 
 async def get_client() -> httpx.AsyncClient:
+    """Shared service-role client. Pooled for the process lifetime."""
     global _client
     if _client is None or _client.is_closed:
         _client = httpx.AsyncClient(
@@ -27,6 +37,27 @@ async def get_client() -> httpx.AsyncClient:
             timeout=10.0,
         )
     return _client
+
+
+def _effective_token(principal) -> str | None:
+    """
+    The token to run a tenant-scoped query under, or None to use the service
+    role. Returns None unless JWT forwarding is switched on and the principal
+    actually carries a token.
+    """
+    if not settings.db_forward_user_jwt:
+        return None
+    token = getattr(principal, "token", None)
+    return token or None
+
+
+async def request_headers(principal=None) -> dict:
+    """
+    Headers for a tenant-scoped request. Pass the calling Principal so RLS can
+    engage when DB_FORWARD_USER_JWT is enabled; falls back to the service role
+    otherwise, with the application-layer org check still enforced in routes.
+    """
+    return _headers(_effective_token(principal))
 
 
 async def close_client():
@@ -57,6 +88,58 @@ async def select(
 async def select_one(table: str, query: str = "*", filters: dict | None = None) -> dict | None:
     rows = await select(table, query, filters)
     return rows[0] if rows else None
+
+
+async def select_as_service(
+    table: str,
+    query: str = "*",
+    filters: dict | None = None,
+) -> list[dict]:
+    """
+    Explicitly service-role SELECT — bypasses RLS.
+
+    Reserved for reads that cannot be tenant-scoped by definition: the
+    `users` lookup in auth.py that establishes which tenant a caller belongs
+    to, and shared ontology tables. Naming it separately keeps every RLS
+    bypass in the codebase greppable.
+    """
+    client = await get_client()
+    params = {"select": query}
+    if filters:
+        params.update(filters)
+    response = await client.get(f"/{table}", params=params)
+    response.raise_for_status()
+    return response.json()
+
+
+async def select_for(
+    principal,
+    table: str,
+    query: str = "*",
+    filters: dict | None = None,
+    limit: int | None = None,
+) -> list[dict]:
+    """
+    Tenant-scoped SELECT, run as the caller when JWT forwarding is enabled.
+
+    Callers must still pass an organization_id filter derived from
+    `principal.assert_org(...)` — RLS is the second line of defence here, not
+    the first, because it only engages once migration 020 is applied and
+    tokens have been reissued.
+    """
+    client = await get_client()
+    params: dict = {"select": query}
+    if filters:
+        params.update(filters)
+    if limit is not None:
+        params["limit"] = str(limit)
+    response = await client.get(
+        f"/{table}",
+        params=params,
+        headers=await request_headers(principal),
+    )
+    response.raise_for_status()
+    return response.json()
 
 
 async def rpc(function_name: str, params: dict) -> list[dict] | dict:
