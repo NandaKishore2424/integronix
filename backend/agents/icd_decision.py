@@ -348,7 +348,7 @@ async def _provider_candidates(entities: dict, org_id: str | None) -> list[dict]
                 "is_billable":        r.get("is_billable", True),
                 "is_cc":              r.get("is_cc", False),
                 "is_mcc":             r.get("is_mcc", False),
-                "base_reimbursement": r.get("base_reimbursement", 5000.0),
+                "base_reimbursement": r.get("base_reimbursement") or 0.0,
                 "icd_version":        "ICD-11" if r.get("source") == "ICD-11" else "ICD-10",
                 "mapping_type":       "provider",
                 "confidence":         float(r.get("score") or 0.0),

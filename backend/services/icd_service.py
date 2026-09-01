@@ -1,6 +1,9 @@
 from database import select, select_one
 import re
 
+# Keyword matches covering less than this fraction-derived score are noise.
+MIN_KEYWORD_SCORE = 0.45
+
 
 async def get_icd_by_code(code: str) -> dict | None:
     rows = await select(
@@ -38,6 +41,13 @@ async def search_icd_by_text(query_text: str, limit: int = 10) -> list[dict]:
     tokens = [t for t in normalized.split() if len(t) >= 3]
 
     index_rows = await _search_index_terms(normalized, tokens)
+
+    # Score index matches by how much of the QUERY the term actually covers.
+    # A flat score here once billed pneumonia as "abrasion of lower back":
+    # the single token "lower" (from "lower lobe") matched "lower back" and
+    # scored the same 0.8 as a genuine match. Coverage scoring makes a
+    # one-token-out-of-six match score ~0.13 and fall below the floor.
+    query_tokens = set(tokens)
     code_scores: dict[str, float] = {}
     for row in index_rows:
         code = row.get("code")
@@ -46,9 +56,19 @@ async def search_icd_by_text(query_text: str, limit: int = 10) -> list[dict]:
             continue
         if term == normalized:
             score = 1.0
+        elif normalized and normalized in term:
+            score = 0.9
+        elif query_tokens:
+            term_tokens = set(term.split())
+            matched = len(query_tokens & term_tokens)
+            score = 0.8 * (matched / len(query_tokens))
         else:
-            score = 0.8
+            score = 0.0
         code_scores[code] = max(code_scores.get(code, 0.0), score)
+
+    # Relevance floor: better to return nothing (and let the caller mark the
+    # case for human review) than to return a confident wrong code.
+    code_scores = {c: sc for c, sc in code_scores.items() if sc >= MIN_KEYWORD_SCORE}
 
     if code_scores:
         codes = sorted(set(code_scores.keys()))

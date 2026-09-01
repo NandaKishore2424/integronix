@@ -85,15 +85,57 @@ async def submit_claim(
 
     log.info("claims_submit_start", session_id=req.session_id, org_id=org_id)
     
-    # Check if a claim already exists for this session to prevent double billing
+    # Check if a claim already exists for this session to prevent double billing.
+    # NOTE: the HTTPException must be raised OUTSIDE the try — raising it inside
+    # a `try/except Exception: pass` silently swallows the rejection, because
+    # HTTPException is an Exception subclass. That exact bug shipped here once.
+    duplicate = False
     try:
         existing = getattr(supabase.table("claims").select("id").eq("session_id", req.session_id).limit(1), "execute")()
-        if existing and existing.data and len(existing.data) > 0:
-            log.warning("claims_submit_duplicate", session_id=req.session_id)
-            raise HTTPException(status_code=400, detail="A claim has already been submitted for this session.")
-    except Exception as e:
-        # Ignore errors if the table doesn't exist yet / not migrated
+        duplicate = bool(existing and existing.data)
+    except Exception:
+        # Table missing / not migrated — treat as no duplicate.
         pass
+    if duplicate:
+        log.warning("claims_submit_duplicate", session_id=req.session_id)
+        raise HTTPException(status_code=400, detail="A claim has already been submitted for this session.")
+
+    # ── Server-side session verification (fail closed) ──
+    # The claim body is client-supplied. Before accepting it, verify the coded
+    # session actually exists in OUR records, belongs to the caller's org, and
+    # produced a usable code. A failed pipeline run must never become a claim.
+    case_resp = getattr(
+        supabase.table("clinical_cases")
+        .select("case_id, processing_status, organization_id")
+        .eq("session_id", req.session_id)
+        .maybe_single(),
+        "execute",
+    )()
+    case_row = getattr(case_resp, "data", None) if case_resp else None
+    if not case_row:
+        raise HTTPException(status_code=422, detail="No coded session found for this session_id. Run the coding pipeline first.")
+    if case_row.get("processing_status") != "COMPLETE":
+        raise HTTPException(status_code=422, detail="This coding session did not complete successfully and cannot be billed.")
+    if case_row.get("organization_id") and str(case_row["organization_id"]) != str(org_id):
+        log.warning("claims_submit_cross_tenant_session", session_id=req.session_id, caller_org=org_id)
+        raise HTTPException(status_code=403, detail="This session does not belong to your organization.")
+    result_resp = getattr(
+        supabase.table("coding_results")
+        .select("ai_icd_code, confidence_score")
+        .eq("case_id", case_row["case_id"])
+        .order("created_at", desc=True)
+        .limit(1),
+        "execute",
+    )()
+    result_rows = getattr(result_resp, "data", None) or []
+    result_row = result_rows[0] if result_rows else None
+    if (
+        not result_row
+        or not result_row.get("ai_icd_code")
+        or result_row["ai_icd_code"] == "UNKNOWN"
+        or float(result_row.get("confidence_score") or 0.0) <= 0.0
+    ):
+        raise HTTPException(status_code=422, detail="This session produced no usable code and cannot be billed. Review is required.")
 
     # ── PAYER POLICY GATE (trustable automation) ──
     try:
@@ -207,7 +249,7 @@ async def submit_claim(
     # Build the claim payload
     payload = {
         "session_id": req.session_id,
-        "organization_id": req.organization_id,
+        "organization_id": org_id,  # verified via assert_org — never the raw request value
         "payer_id": req.payer_id,
         "patient_name": req.patient_name,
         "patient_dob": req.patient_dob,

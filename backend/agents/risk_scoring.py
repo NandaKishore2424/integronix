@@ -110,10 +110,11 @@ async def risk_scoring_node(state: CodingState) -> CodingState:
     try:
         row = await insert("clinical_cases", {
             "session_id":           session_id,
+            "organization_id":      state.get("org_id"),
             "raw_text":             raw_text or None,
             "raw_text_snippet":     raw_text_snippet,
             "structured_entities":  state.get("structured_entities"),
-            "processing_status":    "COMPLETE",
+            "processing_status":    "FAILED" if state.get("error_at") else "COMPLETE",
             "completed_at":         datetime.now(timezone.utc).isoformat(),
             "document_source":      document_source,
             "ocr_used":             ocr_used,
@@ -139,7 +140,8 @@ async def risk_scoring_node(state: CodingState) -> CodingState:
     # ── Write coding_results row ────────────────────────────────────────────────
     try:
         await insert("coding_results", {
-            "case_id":              case_id,         # FK → clinical_cases (may be None if write failed)
+            "case_id":              case_id,
+            "organization_id":      state.get("org_id"),         # FK → clinical_cases (may be None if write failed)
             "resolved_snomed_code": state.get("resolved_snomed_code"),
             "mapping_path":         state.get("mapping_path"),
             "ai_icd_code":          state.get("final_icd_code"),
