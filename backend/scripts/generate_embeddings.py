@@ -32,7 +32,7 @@ if not DATABASE_URL:
 
 PAGE_SIZE     = 1000
 ENCODE_BATCH  = 64
-COMMIT_EVERY  = 5000
+COMMIT_EVERY  = 1000   # small commits — Supabase enforces a statement timeout
 
 
 print("Loading model all-MiniLM-L6-v2 on CPU...")
@@ -98,7 +98,7 @@ def process_table(
                     update_cur,
                     f"UPDATE {table} SET embedding = %s::vector WHERE {pk_col} = %s",
                     pending,
-                    page_size=1000,
+                    page_size=100,
                 )
                 conn.commit()
                 total += len(pending)
@@ -112,7 +112,7 @@ def process_table(
                 update_cur,
                 f"UPDATE {table} SET embedding = %s::vector WHERE {pk_col} = %s",
                 pending,
-                page_size=1000,
+                page_size=100,
             )
             conn.commit()
             total += len(pending)
@@ -123,7 +123,7 @@ def process_table(
 
 
 def main() -> None:
-    conn = psycopg2.connect(DATABASE_URL)
+    conn = psycopg2.connect(DATABASE_URL, options="-c statement_timeout=300000")
     conn.autocommit = False
     try:
         print("\nStep 1/2: ICD codes")

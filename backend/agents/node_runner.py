@@ -22,6 +22,19 @@ def safe_node(node_name: str):
         async def wrapper(state: CodingState) -> CodingState:
             session_id = str(state.get("session_id", "unknown"))
 
+            # Fail-closed short-circuit: once any node has recorded a failure,
+            # downstream nodes must not run — they would compute on partial
+            # state and dress a failed run up as a plausible result. The graph
+            # still drains to END, but every remaining node becomes a no-op.
+            if state.get("error_at"):
+                log.warning(
+                    "node_skipped_due_to_upstream_error",
+                    node_name=node_name,
+                    session_id=session_id,
+                    failed_at=state["error_at"],
+                )
+                return state
+
             log.info(
                 "node_started",
                 node_name=node_name,

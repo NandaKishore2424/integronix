@@ -30,7 +30,7 @@ async def fetch_snomed_icd_mappings(
 )
 async def search_icd(
     q: str = Query(..., description="Search query"),
-    org_id: str = Query(..., description="Organization ID"),
+    org_id: str | None = Query(None, description="Deprecated — org is taken from the caller's token"),
     limit: int = Query(10, ge=1, le=10, description="Max results"),
     principal: Principal = Depends(get_principal),
 ):

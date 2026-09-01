@@ -39,7 +39,7 @@ class Settings(BaseSettings):
 
     # ── Groq LLM ─────────────────────────────────────────────────────────────
     groq_api_key: str
-    groq_model: str = "llama-3.3-70b-versatile"
+    groq_model: str = "openai/gpt-oss-120b"
     groq_model_version: str = "2024-12"
     groq_timeout_seconds: int = 15
     groq_max_retries: int = 1
