@@ -16,6 +16,40 @@ log = get_logger(__name__)
 # These keywords are used to score how specific a code is.
 # For example, a code description containing "with complications" is more
 # specific than one without, and its score will be boosted.
+# Words that describe coding metadata rather than clinical findings. They are
+# never "distinguishing" — a note cannot be expected to contain "unspecified".
+META_WORDS = {
+    "unspecified", "specified", "other", "organism", "elsewhere",
+    "classified", "without", "disease", "disorder", "condition",
+    "encounter", "initial", "subsequent", "sequela", "personal", "history",
+}
+
+
+def _description_tokens(description: str) -> list[str]:
+    return [w for w in re.findall(r"[a-z]+", description.lower()) if len(w) > 4]
+
+
+def _distinguishing_support(candidate: dict, entities: dict, raw_text: str) -> float:
+    """
+    Fraction of the code's distinguishing clinical terms the chart supports.
+
+    ICD-10-CM guideline: code to the highest level of specificity SUPPORTED BY
+    the documentation. "Desquamative interstitial pneumonia" (J84.117) must not
+    outrank plain "Pneumonia, unspecified organism" (J18.9) for a note that
+    never mentions desquamative or interstitial — a longer code is only more
+    correct when the chart actually documents what makes it specific.
+    """
+    tokens = [w for w in _description_tokens(candidate.get("description", ""))
+              if w not in META_WORDS]
+    if not tokens:
+        return 1.0
+    hay = (raw_text or "").lower() + " " + " ".join(
+        (d.get("text") or "").lower() + " " + (d.get("evidence_text") or "").lower()
+        for d in entities.get("diagnoses", [])
+    )
+    return sum(1 for w in tokens if w in hay) / len(tokens)
+
+
 COMPLICATION_KEYWORDS = [
     r"\bwith\b",     # Using a word boundary to avoid matching "without"
     "complicated by", "chronic kidney", "acute", "stage",
@@ -83,12 +117,17 @@ def _kw_match(text: str, keywords: list) -> bool:
     return False
 
 
-def _specificity_score(candidate: dict, entities: dict) -> float:
-    # Step 3 of our algorithm: Score the specificity of a candidate code.
+def _specificity_score(candidate: dict, entities: dict, raw_text: str = "") -> float:
+    # Step 3: Score the specificity of a candidate code — but specificity must
+    # be EARNED by the documentation. Length alone once let J84.117
+    # ("Desquamative interstitial pneumonia", 7 chars) outrank J18.9 for a
+    # plain community-acquired pneumonia note, purely because len("J84.117")
+    # * 0.15 maxed the score. Unsupported specificity is upcoding.
     code = candidate.get("code", "")
     description = candidate.get("description", "").lower()
-    # Longer codes are generally more specific, so we start there.
-    score = len(code) * 0.15
+    base = min(len(code) * 0.15, 1.0)
+    support = _distinguishing_support(candidate, entities, raw_text)
+    score = base * (0.35 + 0.65 * support)
     diag_text = " ".join(d.get("text", "").lower() for d in entities.get("diagnoses", []))
     # If the code's description and the clinical text both mention a complication, boost the score.
     for kw in COMPLICATION_KEYWORDS:
@@ -128,8 +167,11 @@ def _clinical_consistency_score(candidate: dict, entities: dict) -> float:
         d.get("evidence_text", "").lower() for d in entities.get("diagnoses", [])
     )
 
-    # Count how many significant words in ICD description appear in evidence
-    words = [w for w in description.split() if len(w) > 4]
+    # Count how many significant CLINICAL words of the description appear in
+    # the evidence. Meta words ("unspecified", "organism") are excluded — they
+    # describe the code, not the patient, and counting them punished exactly
+    # the codes that should win when documentation is non-specific.
+    words = [w for w in _description_tokens(description) if w not in META_WORDS]
     if not words:
         return 0.5
 
@@ -152,7 +194,7 @@ def _final_score(candidate: dict, entities: dict, raw_text: str = "") -> float:
     """
     try:
         confidence   = float(candidate.get("confidence", 0.85))
-        specificity  = _specificity_score(candidate, entities)
+        specificity  = _specificity_score(candidate, entities, raw_text)
         consistency  = _clinical_consistency_score(candidate, entities)
         combination  = _combination_code_priority(candidate)
         negation     = _negation_penalty(candidate, entities, raw_text)

@@ -23,7 +23,6 @@ from dotenv import load_dotenv
 load_dotenv()
 
 import psycopg2
-from psycopg2.extras import execute_batch
 from sentence_transformers import SentenceTransformer
 
 DATABASE_URL = os.getenv("DATABASE_URL")
@@ -32,7 +31,7 @@ if not DATABASE_URL:
 
 PAGE_SIZE     = 1000
 ENCODE_BATCH  = 64
-COMMIT_EVERY  = 1000   # small commits — Supabase enforces a statement timeout
+COMMIT_EVERY  = 1000   # one COPY + one join-UPDATE per flush
 
 
 print("Loading model all-MiniLM-L6-v2 on CPU...")
@@ -49,6 +48,29 @@ def encode(texts: list[str]) -> list[list[float]]:
     ).tolist()
 
 
+
+def _flush(update_cur, table: str, pk_col: str, pending: list[tuple]) -> None:
+    """Bulk write: COPY rows into a temp stage table, then one join-UPDATE.
+
+    Per-row UPDATEs cost a network round-trip each (~3-4 min per 1000 rows
+    against Supabase). COPY streams the whole batch in one shot and the single
+    UPDATE joins it server-side — the same batch lands in a few seconds.
+    """
+    from io import StringIO
+    # SET LOCAL applies for the current transaction only — this survives
+    # transaction-pooled connections where connection options are ignored.
+    update_cur.execute("SET LOCAL statement_timeout = '300s'")
+    buf = StringIO()
+    for vec, pk in pending:
+        buf.write(pk + "\t[" + ",".join(f"{x:.6f}" for x in vec) + "]\n")
+    buf.seek(0)
+    update_cur.execute("CREATE TEMP TABLE IF NOT EXISTS _emb_stage (pk text PRIMARY KEY, vec text)")
+    update_cur.execute("TRUNCATE _emb_stage")
+    update_cur.copy_expert("COPY _emb_stage (pk, vec) FROM STDIN", buf)
+    update_cur.execute(
+        f"UPDATE {table} t SET embedding = s.vec::vector FROM _emb_stage s WHERE t.{pk_col} = s.pk"
+    )
+
 def process_table(
     conn,
     *,
@@ -56,6 +78,7 @@ def process_table(
     pk_col: str,
     text_col: str,
     include_pk_in_text: bool,
+    extra_where: str = "",
 ) -> int:
     total = 0
     t0 = time.perf_counter()
@@ -70,6 +93,7 @@ def process_table(
                 SELECT {pk_col}, {text_col}
                 FROM {table}
                 WHERE embedding IS NULL
+                  {extra_where}
                   AND {pk_col} > %s
                 ORDER BY {pk_col}
                 LIMIT %s
@@ -94,12 +118,7 @@ def process_table(
             last_pk = pks[-1]
 
             if len(pending) >= COMMIT_EVERY:
-                execute_batch(
-                    update_cur,
-                    f"UPDATE {table} SET embedding = %s::vector WHERE {pk_col} = %s",
-                    pending,
-                    page_size=100,
-                )
+                _flush(update_cur, table, pk_col, pending)
                 conn.commit()
                 total += len(pending)
                 elapsed = round(time.perf_counter() - t0, 1)
@@ -108,12 +127,7 @@ def process_table(
 
         # flush remainder
         if pending:
-            execute_batch(
-                update_cur,
-                f"UPDATE {table} SET embedding = %s::vector WHERE {pk_col} = %s",
-                pending,
-                page_size=100,
-            )
+            _flush(update_cur, table, pk_col, pending)
             conn.commit()
             total += len(pending)
 
@@ -125,6 +139,9 @@ def process_table(
 def main() -> None:
     conn = psycopg2.connect(DATABASE_URL, options="-c statement_timeout=300000")
     conn.autocommit = False
+    with conn.cursor() as cur:
+        cur.execute("SET statement_timeout = '300s'")
+    conn.commit()
     try:
         print("\nStep 1/2: ICD codes")
         icd_count = process_table(
@@ -133,16 +150,26 @@ def main() -> None:
             pk_col="code",
             text_col="description",
             include_pk_in_text=True,
+            # Only billable (leaf) codes can appear on a claim — the decision
+            # node filters non-billable candidates anyway, and the Supabase
+            # free tier (500 MB) cannot hold vectors for rows that can never win.
+            extra_where="AND is_billable",
         )
 
-        print("\nStep 2/2: SNOMED concepts")
-        snomed_count = process_table(
-            conn,
-            table="snomed_concepts",
-            pk_col="snomed_code",
-            text_col="description",
-            include_pk_in_text=False,
-        )
+        if os.getenv("EMBED_SNOMED") == "1":
+            print("\nStep 2/2: SNOMED concepts")
+            snomed_count = process_table(
+                conn,
+                table="snomed_concepts",
+                pk_col="snomed_code",
+                text_col="description",
+                include_pk_in_text=False,
+            )
+        else:
+            snomed_count = 0
+            print("\nStep 2/2: SNOMED concepts — SKIPPED.")
+            print("  379K vectors ≈ 600+ MB, which exceeds the Supabase free tier (500 MB).")
+            print("  Set EMBED_SNOMED=1 to run it anyway on a larger plan.")
     finally:
         conn.close()
 
