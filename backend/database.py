@@ -7,6 +7,7 @@ from logger import get_logger
 log = get_logger(__name__)
 
 _client: httpx.AsyncClient | None = None
+_client_loop_id: int | None = None
 
 
 def _headers(user_token: str | None = None) -> dict:
@@ -29,8 +30,21 @@ def _headers(user_token: str | None = None) -> dict:
 
 async def get_client() -> httpx.AsyncClient:
     """Shared service-role client. Pooled for the process lifetime."""
-    global _client
-    if _client is None or _client.is_closed:
+    global _client, _client_loop_id
+    # An httpx.AsyncClient is bound to the event loop it was created on.
+    # Under pytest (one loop per TestClient request) — and under any server
+    # reload — a cached client from a dead loop raises "Event loop is closed"
+    # on its next use. Recreate whenever the running loop changes.
+    import asyncio
+    loop_id = id(asyncio.get_running_loop())
+    if _client is not None and (_client.is_closed or loop_id != _client_loop_id):
+        try:
+            await _client.aclose()
+        except Exception:
+            pass
+        _client = None
+    if _client is None:
+        _client_loop_id = loop_id
         _client = httpx.AsyncClient(
             base_url=f"{settings.supabase_url}/rest/v1",
             headers=_headers(),
