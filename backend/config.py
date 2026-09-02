@@ -4,7 +4,7 @@ config.py — Centralized configuration via Pydantic Settings.
 All environment variables are validated here at startup.
 Import `settings` everywhere instead of using os.getenv().
 """
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 from functools import lru_cache
 from pydantic import field_validator
 
@@ -65,11 +65,12 @@ class Settings(BaseSettings):
     app_port: int = 8000
     log_level: str = "INFO"
 
-    class Config:
-        env_file = ".env"
-        env_file_encoding = "utf-8"
-        case_sensitive = False
-        extra = "ignore"
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        case_sensitive=False,
+        extra="ignore",
+    )
 
     @field_validator("supabase_url", "groq_api_key")
     @classmethod

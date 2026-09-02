@@ -31,3 +31,9 @@ docs/
 documents/
 figures/
 Integronix-Interview-Answers.pdf
+
+# ── Test / coverage artifacts ───────────────────────────
+backend/.coverage
+backend/coverage.xml
+backend/htmlcov/
+backend/.pytest_cache/
