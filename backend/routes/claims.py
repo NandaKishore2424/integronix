@@ -1,10 +1,11 @@
 import uuid
-from fastapi import APIRouter, HTTPException, Depends, Header
+from decimal import Decimal, ROUND_HALF_UP
+from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel, Field
 from typing import Optional, List, Any, Literal
-from supabase import create_client, Client
 from logger import get_logger
 from config import settings
+from database import select, select_one, insert, update, rpc
 from services.payer_policy_gate import run_payer_policy_gate
 from services.org_settings_service import get_org_settings
 from services.fhir_claim_builder import build_fhir_claim_proposal
@@ -13,27 +14,39 @@ from auth import Principal, get_principal, require_roles, require_payer_org
 log = get_logger(__name__)
 router = APIRouter(prefix="/claims", tags=["claims"])
 
-def get_supabase(authorization: Optional[str] = Header(None)) -> Client:
-    """Gets a service-role supabase client to interact with the claims db."""
-    url = settings.supabase_url
-    key = settings.supabase_service_key or settings.supabase_anon_key
-    return create_client(url, key)
+# ── Money ─────────────────────────────────────────────────────────────────────
+# Claim amounts are Decimal, never float. EDI 837/835 must reconcile to the
+# cent; float arithmetic drifts (0.1 + 0.2 != 0.3) and the drift accumulates
+# across line items. Decimal(str(x)) — not Decimal(x) — so an incoming float
+# is parsed from its shortest repr instead of importing its binary error.
+CENT = Decimal("0.01")
+
+
+def _money(value) -> Decimal:
+    return Decimal(str(value or 0)).quantize(CENT, rounding=ROUND_HALF_UP)
+
+
+def _uuid_or_none(value: str | None) -> str | None:
+    """claim_audit_logs.changed_by_user_id is a uuid column; dev/test
+    principals carry synthetic ids that must become NULL, not a DB error."""
+    try:
+        return str(uuid.UUID(str(value)))
+    except (ValueError, TypeError):
+        return None
 
 # ── Tenant boundary helpers ───────────────────────────────────────────────────
 
-def _payer_ids_for_org(supabase, org_id: str) -> set[str]:
+async def _payer_ids_for_org(org_id: str) -> set[str]:
     """The payer records owned by a payer organization (payers.organization_id)."""
     try:
-        res = getattr(
-            supabase.table("payers").select("id").eq("organization_id", org_id), "execute"
-        )()
-        return {str(r["id"]) for r in (getattr(res, "data", None) or [])}
+        rows = await select("payers", query="id", filters={"organization_id": f"eq.{org_id}"})
+        return {str(r["id"]) for r in rows}
     except Exception as exc:
         log.error("payer_ids_lookup_failed", org_id=org_id, error=str(exc))
         return set()
 
 
-def _assert_claim_access(claim: dict, principal: Principal, supabase) -> None:
+async def _assert_claim_access(claim: dict, principal: Principal) -> None:
     """
     Confirm the caller may see this claim.
 
@@ -43,7 +56,7 @@ def _assert_claim_access(claim: dict, principal: Principal, supabase) -> None:
     information the caller is not entitled to.
     """
     if principal.is_payer:
-        allowed = _payer_ids_for_org(supabase, principal.organization_id)
+        allowed = await _payer_ids_for_org(principal.organization_id)
         if str(claim.get("payer_id") or "") in allowed:
             return
     elif str(claim.get("organization_id") or "") == str(principal.organization_id):
@@ -81,22 +94,13 @@ async def submit_claim(
     organization_id in the body is rejected rather than honoured.
     """
     org_id = principal.assert_org(req.organization_id)
-    supabase = get_supabase()
 
     log.info("claims_submit_start", session_id=req.session_id, org_id=org_id)
-    
+
     # Check if a claim already exists for this session to prevent double billing.
-    # NOTE: the HTTPException must be raised OUTSIDE the try — raising it inside
-    # a `try/except Exception: pass` silently swallows the rejection, because
-    # HTTPException is an Exception subclass. That exact bug shipped here once.
-    duplicate = False
-    try:
-        existing = getattr(supabase.table("claims").select("id").eq("session_id", req.session_id).limit(1), "execute")()
-        duplicate = bool(existing and existing.data)
-    except Exception:
-        # Table missing / not migrated — treat as no duplicate.
-        pass
-    if duplicate:
+    existing = await select("claims", query="id",
+                            filters={"session_id": f"eq.{req.session_id}"}, limit=1)
+    if existing:
         log.warning("claims_submit_duplicate", session_id=req.session_id)
         raise HTTPException(status_code=400, detail="A claim has already been submitted for this session.")
 
@@ -104,14 +108,11 @@ async def submit_claim(
     # The claim body is client-supplied. Before accepting it, verify the coded
     # session actually exists in OUR records, belongs to the caller's org, and
     # produced a usable code. A failed pipeline run must never become a claim.
-    case_resp = getattr(
-        supabase.table("clinical_cases")
-        .select("case_id, processing_status, organization_id")
-        .eq("session_id", req.session_id)
-        .maybe_single(),
-        "execute",
-    )()
-    case_row = getattr(case_resp, "data", None) if case_resp else None
+    case_row = await select_one(
+        "clinical_cases",
+        query="case_id, processing_status, organization_id",
+        filters={"session_id": f"eq.{req.session_id}"},
+    )
     if not case_row:
         raise HTTPException(status_code=422, detail="No coded session found for this session_id. Run the coding pipeline first.")
     if case_row.get("processing_status") != "COMPLETE":
@@ -119,16 +120,11 @@ async def submit_claim(
     if case_row.get("organization_id") and str(case_row["organization_id"]) != str(org_id):
         log.warning("claims_submit_cross_tenant_session", session_id=req.session_id, caller_org=org_id)
         raise HTTPException(status_code=403, detail="This session does not belong to your organization.")
-    result_resp = getattr(
-        supabase.table("coding_results")
-        .select("ai_icd_code, confidence_score")
-        .eq("case_id", case_row["case_id"])
-        .order("created_at", desc=True)
-        .limit(1),
-        "execute",
-    )()
-    result_rows = getattr(result_resp, "data", None) or []
-    result_row = result_rows[0] if result_rows else None
+    result_row = await select_one(
+        "coding_results",
+        query="ai_icd_code, confidence_score",
+        filters={"case_id": f"eq.{case_row['case_id']}", "order": "created_at.desc", "limit": "1"},
+    )
     if (
         not result_row
         or not result_row.get("ai_icd_code")
@@ -139,26 +135,16 @@ async def submit_claim(
 
     # ── PAYER POLICY GATE (trustable automation) ──
     try:
-        payer_policy_resp = getattr(
-            supabase.table("payers")
-            .select(
+        payer_policy = await select_one(
+            "payers",
+            query=(
                 "id, name, payer_type, base_allowed_multiplier, "
                 "auto_approve_enabled, auto_approve_confidence_min, auto_approve_max_risk, "
                 "auto_approve_requires_patient_dob, auto_approve_requires_patient_sex, "
                 "auto_approve_payer_responsibility_pct, accepted_icd_versions"
-            )
-            .eq("id", req.payer_id)
-            .maybe_single(),
-            "execute",
-        )()
-        # Supabase client returns a response object with `.data`
-        payer_policy = None
-        if payer_policy_resp and getattr(payer_policy_resp, "data", None):
-            # `.maybe_single()` typically returns an object (not a list), but handle both.
-            if isinstance(payer_policy_resp.data, list):
-                payer_policy = payer_policy_resp.data[0] if payer_policy_resp.data else None
-            else:
-                payer_policy = payer_policy_resp.data
+            ),
+            filters={"id": f"eq.{req.payer_id}"},
+        )
     except Exception:
         payer_policy = None
 
@@ -181,16 +167,13 @@ async def submit_claim(
     if isinstance(req.claim_data, dict):
         try:
             # Resolve organization name (fall back to id if unavailable)
-            _org_name_resp = None
-            _org_name = req.organization_id
+            _org_name = org_id
             _payer_name = (payer_policy or {}).get("name") or req.payer_id
             try:
-                _org_resp = getattr(
-                    supabase.table("organizations").select("name").eq("id", req.organization_id).maybe_single(),
-                    "execute",
-                )()
-                if _org_resp and getattr(_org_resp, "data", None):
-                    _org_name = _org_resp.data.get("name") or req.organization_id
+                _org_row = await select_one("organizations", query="name",
+                                            filters={"id": f"eq.{org_id}"})
+                if _org_row:
+                    _org_name = _org_row.get("name") or org_id
             except Exception:
                 pass
 
@@ -227,24 +210,26 @@ async def submit_claim(
     payer_responsibility_pct = None
 
     if gate_report.get("should_auto_approve"):
-        payer_responsibility_pct = float(payer_policy.get("auto_approve_payer_responsibility_pct") or 0.80)
-        payer_multiplier = float(payer_policy.get("base_allowed_multiplier") or 1.0)
+        pct = Decimal(str(payer_policy.get("auto_approve_payer_responsibility_pct") or "0.80"))
+        payer_multiplier = Decimal(str(payer_policy.get("base_allowed_multiplier") or "1.0"))
+        payer_responsibility_pct = float(pct)  # echoed in the response only
 
         financial_summary = req.claim_data.get("financial_summary") or {}
         line_items = financial_summary.get("line_items") or []
 
-        total_allowed = 0.0
-        for item in line_items:
-            base = float(item.get("base_price") or 0.0)
-            total_allowed += base * payer_multiplier
+        # Sum in Decimal, quantize ONCE at the end — quantizing per line and
+        # summing loses/creates cents relative to the true total.
+        total_allowed = _money(sum(
+            (Decimal(str(item.get("base_price") or 0)) * payer_multiplier
+             for item in line_items), Decimal("0")))
+        total_allowed = min(total_allowed, _money(req.total_billed_amount))
 
-        total_allowed = round(total_allowed, 2)
-        total_allowed = min(total_allowed, float(req.total_billed_amount or 0.0))
+        total_paid = _money(total_allowed * pct)
+        # Patient responsibility is the REMAINDER, never an independent
+        # percentage — the three amounts must sum exactly.
+        patient_resp = total_allowed - total_paid
 
-        total_paid = round(total_allowed * payer_responsibility_pct, 2)
-        patient_resp = round(total_allowed - total_paid, 2)
-
-        initial_status = "PAID" if payer_responsibility_pct >= 1.0 else "PARTIALLY_PAID"
+        initial_status = "PAID" if pct >= 1 else "PARTIALLY_PAID"
 
     # Build the claim payload
     payload = {
@@ -264,43 +249,45 @@ async def submit_claim(
     }
     
     try:
-        # We handle submitted_at via DB trigger or manual insert using string 'now()' isn't always safe natively in python client
-        res = getattr(supabase.table("claims").insert(payload), "execute")()
-        
-        # Manually update the submitted_at timestamp (since we can't use functions in normal insert JSON simply)
-        if res and res.data and len(res.data) > 0:
-            claim_id = res.data[0]["id"]
-            
-            # === Insert HIPAA Audit Trail ===
-            try:
-                audit_log = {
-                    "claim_id": claim_id,
-                    "previous_status": None,
-                    "new_status": initial_status,
-                    "action_notes": (
-                        "Auto-approved via payer policy gate."
-                        if gate_report.get("should_auto_approve")
-                        else "Initial submission to payer workflow."
-                    ),
-                }
-                getattr(supabase.table("claim_audit_logs").insert(audit_log), "execute")()
-            except Exception as audit_e:
-                log.error("claims_submit_audit_failed", error=str(audit_e))
-
-            # To be thoroughly bulletproof on python client version behavior:
-            return {
-                "status": "success", 
-                "claim_id": claim_id, 
-                "message": "Claim successfully submitted to the payer workflow."
-            }
-        else:
+        row = await insert("claims", payload)
+        if not row:
             raise HTTPException(status_code=500, detail="Failed to create claim record")
-            
+        claim_id = row["id"]
+    except HTTPException:
+        raise
     except Exception as e:
+        # Exception text can carry row data; log it, return a reference only.
         log.error("claims_submit_failed", error=str(e), session_id=req.session_id)
-        if hasattr(e, "message"):
-            raise HTTPException(status_code=500, detail=str(e.message))
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=f"Claim submission failed. Reference: {req.session_id}")
+
+    # The HIPAA audit trail is NOT optional. If the audit row cannot be
+    # written, the claim must not stand — remove it and fail the request,
+    # rather than leaving an untracked claim in the payer queue.
+    try:
+        await insert("claim_audit_logs", {
+            "claim_id": claim_id,
+            "previous_status": None,
+            "new_status": initial_status,
+            "changed_by_user_id": _uuid_or_none(principal.user_id),
+            "action_notes": (
+                "Auto-approved via payer policy gate."
+                if gate_report.get("should_auto_approve")
+                else "Initial submission to payer workflow."
+            ),
+        })
+    except Exception as audit_e:
+        log.error("claims_submit_audit_failed", claim_id=claim_id, error=str(audit_e))
+        try:
+            await update("claims", {"status": "SUBMISSION_FAILED"}, {"id": f"eq.{claim_id}"})
+        except Exception:
+            log.error("claims_submit_compensation_failed", claim_id=claim_id)
+        raise HTTPException(status_code=500, detail="Claim could not be recorded with an audit trail and was not submitted.")
+
+    return {
+        "status": "success",
+        "claim_id": claim_id,
+        "message": "Claim successfully submitted to the payer workflow."
+    }
 
 
 @router.get("/organization/{org_id}")
@@ -309,15 +296,13 @@ async def list_claims(org_id: str, principal: Principal = Depends(get_principal)
     """
     Retrieves the claims inbox for a specific organization/hospital.
     """
-    supabase = get_supabase()
-    
     try:
-        # Fetching claims and joining payer name
-        res = getattr(supabase.table("claims").select("*, payers(name)").eq("organization_id", org_id).order("created_at", desc=True).limit(100), "execute")()
-        
-        if res and res.data is not None:
-            return {"claims": res.data}
-        return {"claims": []}
+        rows = await select(
+            "claims", query="*, payers(name)",
+            filters={"organization_id": f"eq.{org_id}", "order": "created_at.desc"},
+            limit=100,
+        )
+        return {"claims": rows}
     except Exception as e:
         log.error("claims_list_failed", org_id=org_id, error=str(e))
         raise HTTPException(status_code=500, detail="Failed to fetch claims list.")
@@ -327,7 +312,7 @@ async def list_payer_claims(
     payer_id: str,
     principal: Principal = Depends(require_payer_org()),
 ):
-    if payer_id not in _payer_ids_for_org(get_supabase(), principal.organization_id):
+    if payer_id not in await _payer_ids_for_org(principal.organization_id):
         log.warning(
             "payer_queue_denied",
             auth_id=principal.auth_id,
@@ -339,15 +324,13 @@ async def list_payer_claims(
     Retrieves the global claims inbox array for a specific Payer (Insurance Company).
     Includes the organization/hospital name that submitted the claim.
     """
-    supabase = get_supabase()
-    
     try:
-        # Fetching claims and joining organization name to see who billed them
-        res = getattr(supabase.table("claims").select("*, organizations(name)").eq("payer_id", payer_id).order("created_at", desc=True).limit(200), "execute")()
-        
-        if res and res.data is not None:
-            return {"claims": res.data}
-        return {"claims": []}
+        rows = await select(
+            "claims", query="*, organizations(name)",
+            filters={"payer_id": f"eq.{payer_id}", "order": "created_at.desc"},
+            limit=200,
+        )
+        return {"claims": rows}
     except Exception as e:
         log.error("payer_claims_list_failed", payer_id=payer_id, error=str(e))
         raise HTTPException(status_code=500, detail="Failed to fetch payer claims list.")
@@ -355,12 +338,14 @@ async def list_payer_claims(
 @router.get("/detail/{claim_id}")
 async def get_claim_detail(claim_id: str, principal: Principal = Depends(get_principal)):
     """Fetches a single claim detail payload for the Adjudication Screen"""
-    supabase = get_supabase()
     try:
-        res = getattr(supabase.table("claims").select("*, organizations(name), claim_audit_logs(*)").eq("id", claim_id).maybe_single(), "execute")()
-        if res and res.data:
-            _assert_claim_access(res.data, principal, supabase)
-            return {"claim": res.data}
+        claim = await select_one(
+            "claims", query="*, organizations(name), claim_audit_logs(*)",
+            filters={"id": f"eq.{claim_id}"},
+        )
+        if claim:
+            await _assert_claim_access(claim, principal)
+            return {"claim": claim}
         raise HTTPException(status_code=404, detail="Claim not found")
     except HTTPException:
         raise
@@ -374,13 +359,14 @@ async def list_payers(principal: Principal = Depends(get_principal)):
     Returns the list of enabled payers so the frontend can populate a dropdown
     when the medical coder wants to submit a claim.
     """
-    supabase = get_supabase()
     try:
-        res = getattr(supabase.table("payers").select("id, name, payer_type, base_allowed_multiplier").order("name"), "execute")()
-        if res and res.data is not None:
-            return {"payers": res.data}
-        return {"payers": []}
+        rows = await select(
+            "payers", query="id, name, payer_type, base_allowed_multiplier",
+            filters={"order": "name"},
+        )
+        return {"payers": rows}
     except Exception as e:
+        log.error("payers_list_failed", error=str(e))
         raise HTTPException(status_code=500, detail="Failed to fetch payers.")
 
 @router.get("/payers/by-org/{org_id}")
@@ -390,47 +376,31 @@ async def get_payer_for_org(org_id: str, principal: Principal = Depends(get_prin
     Resolves the payer record for a given organization by its organization_id.
     If an insurance_payer logs in for the first time, auto-creates a payer configured for them.
     """
-    supabase = get_supabase()
     try:
-        org_res = getattr(
-            supabase.table("organizations").select("id, name, type").eq("id", org_id).maybe_single(),
-            "execute"
-        )()
-        if not org_res or not org_res.data:
+        org_data = await select_one("organizations", query="id, name, type",
+                                    filters={"id": f"eq.{org_id}"})
+        if not org_data:
             raise HTTPException(status_code=404, detail="Organization not found")
-        
-        org_data = org_res.data
         if org_data["type"] != "insurance_payer":
             raise HTTPException(status_code=400, detail="Organization is not a payer")
 
         # Try to find the exact linked payer record
-        payer_res = getattr(
-            supabase.table("payers")
-            .select("id, name, payer_type, base_allowed_multiplier")
-            .eq("organization_id", org_id)
-            .limit(1),
-            "execute"
-        )()
-
-        if payer_res.data and len(payer_res.data) > 0:
-            return {"payer": payer_res.data[0]}
+        payer = await select_one(
+            "payers", query="id, name, payer_type, base_allowed_multiplier",
+            filters={"organization_id": f"eq.{org_id}"},
+        )
+        if payer:
+            return {"payer": payer}
 
         # Auto-create if not found (Lazy initialization)
-        log.info(f"Auto-creating payer record for org {org_data['name']} ({org_id})")
-        new_payer = getattr(
-            supabase.table("payers").insert({
-                "organization_id": org_id,
-                "name": org_data["name"],
-                "payer_type": "commercial",
-                "base_allowed_multiplier": 1.00
-            }),
-            "execute"
-        )()
-        
-        return {"payer": new_payer.data[0]}
-    except Exception as exc:
-        log.error("payer_org_fetch_failed", error=str(exc))
-        raise HTTPException(status_code=500, detail="Failed to fetch payer record")
+        log.info("payer_autocreate", org_name=org_data["name"], org_id=org_id)
+        new_payer = await insert("payers", {
+            "organization_id": org_id,
+            "name": org_data["name"],
+            "payer_type": "commercial",
+            "base_allowed_multiplier": 1.00,
+        })
+        return {"payer": new_payer}
     except HTTPException:
         raise
     except Exception as e:
@@ -452,103 +422,107 @@ async def adjudicate_claim(
     principal: Principal = Depends(require_payer_org()),
 ):
     """
-    Simulates a Payer adjudicating (processing) a submitted claim.
-    Calculates the 'Allowed Amount' based on the Payer's contract multiplier,
-    determines what the Payer pays, and leaves the rest as Patient Responsibility.
+    Payer adjudication of a submitted claim.
+
+    The read happens here in Python, but the WRITE is a single database
+    transaction (adjudicate_claim, migration 021): the status check rides in
+    the UPDATE's WHERE clause as an optimistic lock, and the HIPAA audit row
+    commits atomically with the status change. Two concurrent APPROVEs can
+    both pass the Python check below — only one will match the lock; the
+    other receives 409 instead of double-paying.
     """
-    supabase = get_supabase()
-    
     log.info("claims_adjudicate_start", claim_id=claim_id, action=req.action)
-    
+
     try:
         # 1. Fetch the claim and its associated payer details
-        res = getattr(supabase.table("claims").select("*, payers(base_allowed_multiplier)").eq("id", claim_id).maybe_single(), "execute")()
-        if not res or not res.data:
+        claim = await select_one(
+            "claims", query="*, payers(base_allowed_multiplier)",
+            filters={"id": f"eq.{claim_id}"},
+        )
+        if not claim:
             raise HTTPException(status_code=404, detail="Claim not found")
-            
-        claim = res.data
-        _assert_claim_access(claim, principal, supabase)
-        if claim["status"] in ["PAID", "DENIED", "PARTIALLY_PAID"]:
-            raise HTTPException(status_code=400, detail=f"Claim is already {claim['status']}")
-            
-        # 2. Extract financial baseline
-        billed_amount = float(claim.get("total_billed_amount", 0))
-        
+
+        await _assert_claim_access(claim, principal)
+        expected_status = claim["status"]
+        if expected_status in ["PAID", "DENIED", "PARTIALLY_PAID"]:
+            raise HTTPException(status_code=400, detail=f"Claim is already {expected_status}")
+
+        # 2. Financial baseline — Decimal end to end
+        billed_amount = _money(claim.get("total_billed_amount"))
+
         if req.action == 'DENY':
-            update_payload = {
-                "status": "DENIED",
-                "denial_reason": req.denial_reason or "Services not covered under patient plan.",
-                "total_allowed_amount": 0,
-                "total_paid_amount": 0,
-                "patient_responsibility": billed_amount, # Patient owes the full billed amount if denied (simplified)
-            }
-        elif req.action == 'APPROVE':
-            # 3. Calculate Allowed Amount (Contractual Adjustment)
-            # To simulate RCM, we need the original base prices. 
-            # We access them from the frozen claim_data snapshot.
-            claim_data = claim.get("claim_data", {})
-            financial_summary = claim_data.get("financial_summary", {})
-            line_items = financial_summary.get("line_items", [])
-            
-            payer_multiplier = 1.0
+            new_status = "DENIED"
+            denial_reason = req.denial_reason or "Services not covered under patient plan."
+            total_allowed = _money(0)
+            total_paid = _money(0)
+            patient_resp = billed_amount  # patient owes the full billed amount if denied (simplified)
+        else:  # APPROVE — the request model only admits APPROVE | DENY
+            # 3. Allowed amount = base prices from the frozen claim_data
+            #    snapshot × the payer's contract multiplier.
+            claim_data = claim.get("claim_data") or {}
+            line_items = (claim_data.get("financial_summary") or {}).get("line_items") or []
+
+            payer_multiplier = Decimal("1.0")
             if claim.get("payers"):
-                payer_multiplier = float(claim["payers"].get("base_allowed_multiplier", 1.0))
-                
-            # Allowed amount = (CMS Base Price) * (Payer Multiplier)
-            total_allowed = 0.0
-            for item in line_items:
-                base = float(item.get("base_price", 0))
-                total_allowed += base * payer_multiplier
-                
-            total_allowed = round(total_allowed, 2)
-            
-            # The payer cannot "allow" more than what the hospital billed.
-            # If hospital billed $100 but allowed is $120, allowed caps at $100.
+                payer_multiplier = Decimal(str(claim["payers"].get("base_allowed_multiplier") or "1.0"))
+
+            total_allowed = _money(sum(
+                (Decimal(str(item.get("base_price") or 0)) * payer_multiplier
+                 for item in line_items), Decimal("0")))
+            # The payer cannot allow more than the hospital billed.
             total_allowed = min(total_allowed, billed_amount)
-            
-            # 4. Calculate Paid vs Patient Responsibility
-            # Example: Allowed is $80. Payer pays 80% ($64). Patient owes 20% ($16).
-            total_paid = round(total_allowed * req.payer_responsibility_pct, 2)
-            patient_resp = round(total_allowed - total_paid, 2)
-            
-            update_payload = {
-                "status": "PAID" if req.payer_responsibility_pct >= 1.0 else "PARTIALLY_PAID",
-                "total_allowed_amount": total_allowed,
-                "total_paid_amount": total_paid,
-                "patient_responsibility": patient_resp,
-                "denial_reason": None
-            }
-        else:
-            raise HTTPException(status_code=400, detail="Invalid action. Use APPROVE or DENY.")
-            
-        # 5. Save the adjudication back to the database
-        # We also need to set adjudicated_at, using raw sql string if possible, or omit for now
-        update_res = getattr(supabase.table("claims").update(update_payload).eq("id", claim_id), "execute")()
-        
-        # === Insert HIPAA Audit Trail ===
-        try:
-            audit_log = {
-                "claim_id": claim_id,
-                "previous_status": claim["status"],
-                "new_status": update_payload["status"],
-                "action_notes": f"Manual Adjudication: {req.action}. " + (req.denial_reason if req.denial_reason is not None else "")
-            }
-            getattr(supabase.table("claim_audit_logs").insert(audit_log), "execute")()
-        except Exception as audit_e:
-            log.error("claims_adjudicate_audit_failed", error=str(audit_e))
-        
-        log.info("claims_adjudicate_success", claim_id=claim_id, payload=update_payload)
+
+            pct = Decimal(str(req.payer_responsibility_pct))
+            total_paid = _money(total_allowed * pct)
+            # Remainder, not an independent percentage: the three amounts must
+            # sum exactly, cent for cent.
+            patient_resp = total_allowed - total_paid
+
+            new_status = "PAID" if pct >= 1 else "PARTIALLY_PAID"
+            denial_reason = None
+
+        # 4. Atomic write: optimistic-lock UPDATE + audit INSERT + adjudicated_at,
+        #    one transaction inside Postgres.
+        result = await rpc("adjudicate_claim", {
+            "p_claim_id": claim_id,
+            "p_expected_status": expected_status,
+            "p_new_status": new_status,
+            "p_total_allowed": str(total_allowed),
+            "p_total_paid": str(total_paid),
+            "p_patient_responsibility": str(patient_resp),
+            "p_denial_reason": denial_reason,
+            "p_action_notes": f"Manual Adjudication: {req.action}. " + (req.denial_reason or ""),
+            "p_changed_by_user_id": _uuid_or_none(principal.user_id),
+        })
+        if not (isinstance(result, dict) and result.get("ok")):
+            reason = (result or {}).get("reason") if isinstance(result, dict) else None
+            if reason == "not_found":
+                raise HTTPException(status_code=404, detail="Claim not found")
+            # Someone else adjudicated between our read and our write.
+            raise HTTPException(
+                status_code=409,
+                detail=f"Claim was modified concurrently (now {(result or {}).get('current_status')}). Refresh and retry.",
+            )
+
+        adjudication_details = {
+            "status": new_status,
+            "total_allowed_amount": float(total_allowed),
+            "total_paid_amount": float(total_paid),
+            "patient_responsibility": float(patient_resp),
+            "denial_reason": denial_reason,
+        }
+        log.info("claims_adjudicate_success", claim_id=claim_id, payload=adjudication_details)
         return {
             "status": "success",
             "message": f"Claim {req.action.lower()}ed successfully.",
-            "adjudication_details": update_payload
+            "adjudication_details": adjudication_details,
         }
 
     except HTTPException:
         raise
     except Exception as e:
         log.error("claims_adjudicate_failed", claim_id=claim_id, error=str(e))
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=f"Adjudication failed. Reference: {claim_id}")
 
 class AppealRequest(BaseModel):
     justification: str
@@ -561,43 +535,34 @@ async def appeal_claim(
 ):
     """
     Allows a Hospital Biller to appeal a Denied or Partially Paid claim by providing justification.
+
+    Status change + audit row commit atomically (change_claim_status,
+    migration 021); the eligible-status check is the optimistic lock.
+    The denial_reason is deliberately kept — it is what the hospital is
+    contesting.
     """
-    supabase = get_supabase()
     log.info("claims_appeal_start", claim_id=claim_id)
 
     try:
-        # 1. Fetch the claim
-        res = getattr(supabase.table("claims").select("*, payers(name)").eq("id", claim_id).maybe_single(), "execute")()
-        if not res or not res.data:
+        claim = await select_one("claims", query="*, payers(name)",
+                                 filters={"id": f"eq.{claim_id}"})
+        if not claim:
             raise HTTPException(status_code=404, detail="Claim not found")
+        await _assert_claim_access(claim, principal)
 
-        claim = res.data
-        _assert_claim_access(claim, principal, supabase)
-        if claim["status"] not in ["DENIED", "PARTIALLY_PAID"]:
-            raise HTTPException(status_code=400, detail=f"Cannot appeal a claim in {claim['status']} status. Must be DENIED or PARTIALLY_PAID.")
-
-        # 2. Extract original denial reason (if any)
-        # Note: We keep the denial_reason in the db so the hospital knows what they are fighting.
-        
-        update_payload = {
-            "status": "APPEALED",
-            # We don't wipe out the denial_reason because the abstract concept of a denial remains part of the claim's history
-        }
-
-        # 3. Save the status back to the database
-        update_res = getattr(supabase.table("claims").update(update_payload).eq("id", claim_id), "execute")()
-
-        # 4. === Insert HIPAA Audit Trail ===
-        try:
-            audit_log = {
-                "claim_id": claim_id,
-                "previous_status": claim["status"],
-                "new_status": "APPEALED",
-                "action_notes": f"Hospital Appeal Filed: {req.justification}"
-            }
-            getattr(supabase.table("claim_audit_logs").insert(audit_log), "execute")()
-        except Exception as audit_e:
-            log.error("claims_appeal_audit_failed", error=str(audit_e))
+        result = await rpc("change_claim_status", {
+            "p_claim_id": claim_id,
+            "p_expected_statuses": ["DENIED", "PARTIALLY_PAID"],
+            "p_new_status": "APPEALED",
+            "p_action_notes": f"Hospital Appeal Filed: {req.justification}",
+            "p_changed_by_user_id": _uuid_or_none(principal.user_id),
+        })
+        if not (isinstance(result, dict) and result.get("ok")):
+            current = (result or {}).get("current_status") if isinstance(result, dict) else None
+            raise HTTPException(
+                status_code=400,
+                detail=f"Cannot appeal a claim in {current} status. Must be DENIED or PARTIALLY_PAID.",
+            )
 
         log.info("claims_appeal_success", claim_id=claim_id)
         return {
@@ -610,7 +575,7 @@ async def appeal_claim(
         raise
     except Exception as e:
         log.error("claims_appeal_failed", claim_id=claim_id, error=str(e))
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=f"Appeal failed. Reference: {claim_id}")
 
 
 # ── TICKET-04: Payer Edit Codes ───────────────────────────────────────────────
@@ -637,23 +602,18 @@ async def payer_edit_claim(
     if not req.edit_reason or not req.edit_reason.strip():
         raise HTTPException(status_code=400, detail="edit_reason is required. Payer must justify code changes.")
 
-    supabase = get_supabase()
     log.info("claims_payer_edit_start", claim_id=claim_id)
 
     try:
         # 1. Fetch the claim — must be in SUBMITTED status
-        res = getattr(
-            supabase.table("claims")
-            .select("id, status, claim_data, organization_id, payer_id")
-            .eq("id", claim_id)
-            .maybe_single(),
-            "execute",
-        )()
-        if not res or not res.data:
+        claim = await select_one(
+            "claims", query="id, status, claim_data, organization_id, payer_id",
+            filters={"id": f"eq.{claim_id}"},
+        )
+        if not claim:
             raise HTTPException(status_code=404, detail="Claim not found")
 
-        claim = res.data
-        _assert_claim_access(claim, principal, supabase)
+        await _assert_claim_access(claim, principal)
         if claim["status"] != "SUBMITTED":
             raise HTTPException(
                 status_code=400,
@@ -675,47 +635,47 @@ async def payer_edit_claim(
         }
 
         # 3. Insert into payer_code_edits audit table
-        edit_row = {
+        edit_row_result = await insert("payer_code_edits", {
             "claim_id":       claim_id,
             "original_codes": original_codes,
             "edited_codes":   edited_codes,
             "edit_reason":    req.edit_reason.strip(),
-        }
-        edit_res = getattr(supabase.table("payer_code_edits").insert(edit_row), "execute")()
-        edit_id = None
-        if edit_res and edit_res.data and len(edit_res.data) > 0:
-            edit_id = edit_res.data[0].get("id")
+        })
+        edit_id = (edit_row_result or {}).get("id")
 
-        # 4. Update claim: payer_edited flag + reason + embed corrected codes into claim_data
+        # 4. Update claim: payer_edited flag + reason + embed corrected codes
+        #    into claim_data. Optimistic lock on status: if the claim left
+        #    SUBMITTED between our read and this write, no rows match and we
+        #    conflict instead of editing an adjudicated claim.
         claim_data["payer_edited_icd_codes"] = req.edited_icd_codes
         claim_data["payer_edited_cpt_codes"] = req.edited_cpt_codes
         claim_data["payer_edit_reason"] = req.edit_reason.strip()
 
-        getattr(
-            supabase.table("claims")
-            .update({
+        updated = await update(
+            "claims",
+            {
                 "payer_edited":      True,
                 "payer_edit_reason": req.edit_reason.strip(),
                 "claim_data":        claim_data,
-            })
-            .eq("id", claim_id),
-            "execute",
-        )()
+            },
+            {"id": f"eq.{claim_id}", "status": "eq.SUBMITTED"},
+        )
+        if not updated:
+            raise HTTPException(status_code=409, detail="Claim left SUBMITTED status while editing. Refresh and retry.")
 
-        # 5. HIPAA Audit Trail
+        # 5. HIPAA Audit Trail — payer_code_edits (step 3) is itself durable
+        #    audit evidence, so a failure here logs loudly but does not undo
+        #    the edit.
         try:
-            getattr(
-                supabase.table("claim_audit_logs")
-                .insert({
-                    "claim_id":        claim_id,
-                    "previous_status": "SUBMITTED",
-                    "new_status":      "SUBMITTED",  # Status doesn't change, edit is noted
-                    "action_notes":    f"Payer edited codes. Reason: {req.edit_reason.strip()}",
-                }),
-                "execute",
-            )()
+            await insert("claim_audit_logs", {
+                "claim_id":        claim_id,
+                "previous_status": "SUBMITTED",
+                "new_status":      "SUBMITTED",  # Status doesn't change, edit is noted
+                "changed_by_user_id": _uuid_or_none(principal.user_id),
+                "action_notes":    f"Payer edited codes. Reason: {req.edit_reason.strip()}",
+            })
         except Exception as audit_e:
-            log.warning("claims_payer_edit_audit_failed", error=str(audit_e))
+            log.error("claims_payer_edit_audit_failed", claim_id=claim_id, error=str(audit_e))
 
         log.info("claims_payer_edit_success", claim_id=claim_id, edit_id=edit_id)
         return {
@@ -728,7 +688,7 @@ async def payer_edit_claim(
         raise
     except Exception as e:
         log.error("claims_payer_edit_failed", claim_id=claim_id, error=str(e))
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=f"Code edit failed. Reference: {claim_id}")
 
 
 
@@ -744,21 +704,15 @@ async def export_edi_837(claim_id: str, principal: Principal = Depends(get_princ
     All values (patient name, ICD codes, CPT service lines, amounts) are real —
     no fake placeholder data is ever emitted.
     """
-    supabase = get_supabase()
-
     try:
-        res = getattr(
-            supabase.table("claims")
-            .select("*, organizations(name), payers(name, payer_type)")
-            .eq("id", claim_id)
-            .maybe_single(),
-            "execute",
-        )()
-        if not res or not res.data:
+        claim = await select_one(
+            "claims", query="*, organizations(name), payers(name, payer_type)",
+            filters={"id": f"eq.{claim_id}"},
+        )
+        if not claim:
             raise HTTPException(status_code=404, detail="Claim not found")
 
-        claim = res.data
-        _assert_claim_access(claim, principal, supabase)
+        await _assert_claim_access(claim, principal)
         org_name   = (claim.get("organizations") or {}).get("name") or "INTEGRONIX HOSPITAL"
         payer_name = (claim.get("payers") or {}).get("name") or "UNKNOWN PAYER"
         total_billed = float(claim.get("total_billed_amount") or 0.0)
@@ -841,7 +795,7 @@ async def export_edi_837(claim_id: str, principal: Principal = Depends(get_princ
         raise
     except Exception as e:
         log.error("claims_edi_failed", claim_id=claim_id, error=str(e))
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=f"EDI export failed. Reference: {claim_id}")
 
 
 # ── TICKET-05: EDI 835 Remittance Export ─────────────────────────────────────
@@ -858,21 +812,15 @@ async def export_edi_835(claim_id: str, principal: Principal = Depends(get_princ
     Only available when claim is in PAID, PARTIALLY_PAID, or DENIED status.
     Contains BPR, CLP, CAS, and SVC segments derived from the FHIR proposal.
     """
-    supabase = get_supabase()
-
     try:
-        res = getattr(
-            supabase.table("claims")
-            .select("*, organizations(name), payers(name)")
-            .eq("id", claim_id)
-            .maybe_single(),
-            "execute",
-        )()
-        if not res or not res.data:
+        claim = await select_one(
+            "claims", query="*, organizations(name), payers(name)",
+            filters={"id": f"eq.{claim_id}"},
+        )
+        if not claim:
             raise HTTPException(status_code=404, detail="Claim not found")
 
-        claim = res.data
-        _assert_claim_access(claim, principal, supabase)
+        await _assert_claim_access(claim, principal)
         status = claim.get("status", "")
         if status not in _EDI_835_ALLOWED_STATUSES:
             raise HTTPException(
@@ -919,4 +867,4 @@ async def export_edi_835(claim_id: str, principal: Principal = Depends(get_princ
         raise
     except Exception as e:
         log.error("claims_edi835_failed", claim_id=claim_id, error=str(e))
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=f"EDI 835 export failed. Reference: {claim_id}")

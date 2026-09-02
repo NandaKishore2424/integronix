@@ -13,9 +13,9 @@ from typing import Any, List, Optional
 
 from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel, Field
-from supabase import create_client
 
 from config import settings
+from database import select, update
 from logger import get_logger
 
 log = get_logger(__name__)
@@ -24,7 +24,7 @@ from auth import Principal, get_principal, require_payer_org
 router = APIRouter(prefix="/payers", tags=["payers"])
 
 
-def _assert_owns_payer(principal: Principal, payer_id: str, sb) -> None:
+async def _assert_owns_payer(principal: Principal, payer_id: str) -> None:
     """
     A payer organization may only read or modify its own payer record.
 
@@ -33,10 +33,11 @@ def _assert_owns_payer(principal: Principal, payer_id: str, sb) -> None:
     control over disbursement.
     """
     try:
-        res = sb.table("payers").select("id").eq("id", payer_id).eq(
-            "organization_id", principal.organization_id
-        ).limit(1).execute()
-        if getattr(res, "data", None):
+        rows = await select("payers", query="id", filters={
+            "id": f"eq.{payer_id}",
+            "organization_id": f"eq.{principal.organization_id}",
+        }, limit=1)
+        if rows:
             return
     except Exception as exc:
         log.error("payer_ownership_check_failed", payer_id=payer_id, error=str(exc))
@@ -50,15 +51,6 @@ def _assert_owns_payer(principal: Principal, payer_id: str, sb) -> None:
     )
     raise HTTPException(status_code=404, detail=f"Payer '{payer_id}' not found.")
 
-
-# ── helpers ──────────────────────────────────────────────────────────────────
-
-def _sb():
-    """Return a service-role Supabase client."""
-    return create_client(
-        settings.supabase_url,
-        settings.supabase_service_key or settings.supabase_anon_key,
-    )
 
 # ── Pydantic models ───────────────────────────────────────────────────────────
 
@@ -114,18 +106,18 @@ async def get_payer_settings(
     """
     Returns the full automation policy for the requested payer organisation.
     """
-    sb = _sb()
-    _assert_owns_payer(principal, payer_id, sb)
+    await _assert_owns_payer(principal, payer_id)
     try:
-        resp = sb.table("payers").select(SETTINGS_SELECT).eq("id", payer_id).limit(1).execute()
+        rows = await select("payers", query=SETTINGS_SELECT,
+                            filters={"id": f"eq.{payer_id}"}, limit=1)
     except Exception as exc:
         log.error("payer_settings_fetch_failed", payer_id=payer_id, error=str(exc))
         raise HTTPException(status_code=503, detail="Database error while fetching payer settings.")
 
-    if not resp.data:
+    if not rows:
         raise HTTPException(status_code=404, detail=f"Payer '{payer_id}' not found.")
 
-    row = resp.data[0]
+    row = rows[0]
     return PayerSettingsOut(
         payer_id=row["id"],
         auto_approve_enabled=bool(row.get("auto_approve_enabled", False)),
@@ -149,13 +141,8 @@ async def update_payer_settings(
     Persists updated automation policy for a payer.
     Only payer admins should be allowed to call this from the dashboard.
     """
-    sb = _sb()
-
     # Confirm the record exists before patching
-    _assert_owns_payer(principal, payer_id, sb)
-    check = sb.table("payers").select("id").eq("id", payer_id).limit(1).execute()
-    if not check.data:
-        raise HTTPException(status_code=404, detail=f"Payer '{payer_id}' not found.")
+    await _assert_owns_payer(principal, payer_id)
 
     patch = {
         "auto_approve_enabled": body.auto_approve_enabled,
@@ -169,11 +156,17 @@ async def update_payer_settings(
     }
 
     try:
-        sb.table("payers").update(patch).eq("id", payer_id).execute()
+        updated = await update("payers", patch, {"id": f"eq.{payer_id}"})
+        if not updated:
+            raise HTTPException(status_code=404, detail=f"Payer '{payer_id}' not found.")
+    except HTTPException:
+        raise
     except Exception as exc:
         log.error("payer_settings_update_failed", payer_id=payer_id, error=str(exc))
         raise HTTPException(status_code=503, detail="Database error while saving payer settings.")
 
     log.info("payer_settings_updated", payer_id=payer_id, auto_approve_enabled=body.auto_approve_enabled)
-    # Return the new state
-    return await get_payer_settings(payer_id)
+    # Return the new state. principal must be passed explicitly — this is a
+    # direct function call, so FastAPI's Depends default would otherwise leak
+    # in as a raw Depends object and poison the ownership check.
+    return await get_payer_settings(payer_id, principal)

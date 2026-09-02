@@ -2,15 +2,13 @@
 This agent assumes the responsibility of matching extracted medical procedures
 to official CMS CPT/HCPCS codes via semantic vector search.
 """
-import os
-from dotenv import load_dotenv
-from supabase import create_client, Client
+import asyncio
 from sentence_transformers import SentenceTransformer
+from database import rpc
 from agents.graph import CodingState
 from agents.node_runner import safe_node
 from logger import get_logger
 
-load_dotenv()
 log = get_logger(__name__)
 
 # Load model globally to keep the LangGraph pipeline fast across multiple calls
@@ -36,44 +34,33 @@ async def cpt_resolver_node(state: CodingState) -> CodingState:
         state["cpt_codes"] = []
         return state
 
-    url = os.getenv("SUPABASE_URL", "")
-    key = os.getenv("SUPABASE_SERVICE_KEY", "")
-    if not url or not key:
-        log.error("cpt_resolve_failed", session_id=session_id, reason="supabase credentials missing")
-        state["cpt_codes"] = []
-        return state
-
-    supabase: Client = create_client(url, key)
     all_cpt_matches = []
 
     for procedure_text in procedures:
         try:
-            # 1. Generate the semantic vector for the doctor's text
-            embedding_vector = _embedding_model.encode(procedure_text).tolist()
-            
-            # 2. Query our custom Supabase RPC for a semantic search.
+            # 1. Generate the semantic vector for the doctor's text.
+            # encode() is CPU-bound (a transformer forward pass) — run it in a
+            # worker thread so it doesn't stall every other request on the
+            # event loop.
+            embedding_vector = (await asyncio.to_thread(
+                _embedding_model.encode, procedure_text)).tolist()
+
+            # 2. Query our Supabase RPC for a semantic search via the shared
+            # async data layer (this node previously built a synchronous
+            # client per request and blocked the loop on every call).
             # First pass is strict; if we get no match, do a second pass with a
             # lower threshold so common discharge-procedure phrases still map.
-            first_pass_response = supabase.rpc(
-                "match_cpt_codes",
-                {
-                    "query_embedding": embedding_vector,
-                    "match_threshold": 0.55,
-                    "match_count": 1,
-                },
-            ).execute()
-
-            matches = first_pass_response.data or []
+            matches = await rpc("match_cpt_codes", {
+                "query_embedding": embedding_vector,
+                "match_threshold": 0.55,
+                "match_count": 1,
+            }) or []
             if not matches:
-                second_pass_response = supabase.rpc(
-                    "match_cpt_codes",
-                    {
-                        "query_embedding": embedding_vector,
-                        "match_threshold": 0.42,
-                        "match_count": 3,
-                    },
-                ).execute()
-                matches = second_pass_response.data or []
+                matches = await rpc("match_cpt_codes", {
+                    "query_embedding": embedding_vector,
+                    "match_threshold": 0.42,
+                    "match_count": 3,
+                }) or []
 
             if matches:
                 best_match = matches[0]
