@@ -12,7 +12,7 @@ Design goal (India use-case / hackathon v1):
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Optional
 
 from logger import get_logger
@@ -83,19 +83,52 @@ def _add_reason(reasons: list[dict], code: str, message: str, severity: str) -> 
     reasons.append({"code": code, "message": message, "severity": severity})
 
 
+def _resolve_total_billed(claim_data: dict, total_billed_amount) -> float:
+    """
+    The amount a spending-cap rule is measured against.
+
+    This used to read claim_data["total_billed_amount"] alone. That key is
+    never present: the API takes total_billed_amount as a sibling field of
+    claim_data, and claim_data itself is the pipeline's CodeResponse, which
+    has no such field. The cap therefore evaluated 0.0 > threshold — always
+    false — so every payer-configured max_amount rule silently did nothing.
+    Prefer the explicit argument, then the key, then the pipeline's own total.
+    """
+    if total_billed_amount is not None:
+        return float(total_billed_amount)
+    if claim_data.get("total_billed_amount") is not None:
+        return float(claim_data["total_billed_amount"])
+    summary = claim_data.get("financial_summary") or {}
+    return float(summary.get("total_estimated_revenue") or 0.0)
+
+
+def _cpt_code_of(item: Any) -> str:
+    """
+    CPT identifier from a line item, under either key.
+
+    The pipeline emits "code" (cpt_resolver and financial_calculator both do);
+    this rule only ever looked for "cpt_code", so exclude_cpt_prefix matched
+    nothing and never blocked a claim.
+    """
+    if not isinstance(item, dict):
+        return ""
+    return str(item.get("cpt_code") or item.get("code") or "")
+
+
 def _evaluate_custom_rules(
     *,
     reasons: list[dict],
     custom_rules: list[dict],
     claim_data: dict,
     patient_dob_dt,
+    total_billed_amount=None,
 ) -> None:
     """
     Evaluate each payer-defined custom rule against the claim.
     Any failing rule adds a HIGH severity reason, causing the gate to flag the claim
     for manual review regardless of the AI scores.
     """
-    total_billed = float(claim_data.get("total_billed_amount") or 0.0)
+    total_billed = _resolve_total_billed(claim_data, total_billed_amount)
     cpt_codes: list[Any] = claim_data.get("cpt_codes") or []
 
     for rule in custom_rules:
@@ -119,8 +152,8 @@ def _evaluate_custom_rules(
             prefix = (rule.get("code_prefix") or "").strip()
             if prefix:
                 matched = [
-                    c.get("cpt_code", "") for c in cpt_codes
-                    if isinstance(c, dict) and c.get("cpt_code", "").startswith(prefix)
+                    _cpt_code_of(c) for c in cpt_codes
+                    if _cpt_code_of(c).startswith(prefix)
                 ]
                 if matched:
                     _add_reason(
@@ -136,7 +169,7 @@ def _evaluate_custom_rules(
         elif rule_type == "require_min_age":
             min_age = rule.get("min_age")
             if min_age is not None and patient_dob_dt:
-                age = (datetime.utcnow() - patient_dob_dt).days // 365
+                age = (datetime.now(timezone.utc).replace(tzinfo=None) - patient_dob_dt).days // 365
                 if age < int(min_age):
                     _add_reason(
                         reasons,
@@ -151,7 +184,7 @@ def _evaluate_custom_rules(
         elif rule_type == "require_max_age":
             max_age = rule.get("max_age")
             if max_age is not None and patient_dob_dt:
-                age = (datetime.utcnow() - patient_dob_dt).days // 365
+                age = (datetime.now(timezone.utc).replace(tzinfo=None) - patient_dob_dt).days // 365
                 if age > int(max_age):
                     _add_reason(
                         reasons,
@@ -173,6 +206,7 @@ def run_payer_policy_gate(
     claim_data: dict,
     payer_policy: dict,
     org_settings: Optional[dict] = None,
+    total_billed_amount: Optional[float] = None,
 ) -> dict:
     """
     Returns a report:
@@ -236,7 +270,7 @@ def run_payer_policy_gate(
         )
 
     # Validate plausibility (very light check; no PHI inference)
-    if patient_dob_dt and patient_dob_dt.year > datetime.utcnow().year:
+    if patient_dob_dt and patient_dob_dt.year > datetime.now(timezone.utc).year:
         _add_reason(
             reasons,
             code="DOB_IN_FUTURE",
@@ -333,6 +367,7 @@ def run_payer_policy_gate(
             custom_rules=custom_rules,
             claim_data=claim_data,
             patient_dob_dt=patient_dob_dt,
+            total_billed_amount=total_billed_amount,
         )
 
     gate_status = "PASS" if not reasons else "NEEDS_REVIEW"

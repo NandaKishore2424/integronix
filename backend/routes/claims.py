@@ -154,6 +154,9 @@ async def submit_claim(
         claim_data=req.claim_data,
         payer_policy=payer_policy or {},
         org_settings=org_settings,
+        # Passed explicitly: the amount lives here, not inside claim_data,
+        # and the payer's max_amount cap is measured against it.
+        total_billed_amount=req.total_billed_amount,
     )
 
     # Store the gate report inside the claim payload so the payer can review reasons.

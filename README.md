@@ -1,8 +1,10 @@
 # Integronix
 
+[![CI](https://github.com/NandaKishore2424/integronix/actions/workflows/ci.yml/badge.svg)](https://github.com/NandaKishore2424/integronix/actions/workflows/ci.yml)
+
 AI-powered clinical coding and revenue-integrity engine for hospitals. Feed it a clinical note (typed or a scanned PDF) and it independently figures out the ICD-10/11 and CPT codes, then compares its answer against whatever a human coder billed and tells you exactly where the money and the risk are.
 
-Stack: **FastAPI · LangGraph · Groq / Llama 3.3-70B · WHO ICD-API · SNOMED CT · pgvector · Supabase (Postgres + RLS) · Next.js 14**
+Stack: **FastAPI · LangGraph · Groq (gpt-oss-120b) · WHO ICD-API · SNOMED CT · pgvector · Supabase (Postgres + RLS) · Next.js 14**
 
 Built by Team AgentsCrew (Nanda Kishore R, Subashini S, Nathin R) for the Virtusa Jatayu Hackathon.
 
@@ -110,7 +112,7 @@ Neither the ICD nor the SNOMED data is a hardcoded lookup table — both are ETL
 | Frontend | Next.js 14 (App Router), React, TypeScript, Tailwind, Recharts |
 | API | FastAPI, async Python 3.11+ |
 | Orchestration | LangGraph |
-| LLM | Groq — Llama 3.3-70B, used for extraction only |
+| LLM | Groq — `openai/gpt-oss-120b`, used for extraction only |
 | Ontologies | WHO ICD-API v2, SNOMED CT (RF2), CDC/NCHS ICD-10-CM |
 | Vector search | pgvector + sentence-transformers (`all-MiniLM-L6-v2`) |
 | Database | Supabase / Postgres 16, Auth, RLS |
@@ -125,7 +127,7 @@ backend/
   routes/       code, claims, icd, parse, payers, cases, analytics
   services/     EDI builders, FHIR builder, ICD/SNOMED ingestion, payer policy gate
   scripts/      run_icd_ingestion.py, import_snomed_rf2.py, embedding generators
-  tests/        41 tests — EDI/FHIR unit tests + full pipeline E2E
+  tests/        195 tests — 182 unit (hermetic, CI-gated) + 13 integration
 
 frontend/
   src/app/          Next.js pages
@@ -181,11 +183,47 @@ curl -X POST http://localhost:8000/api/v1/code/run \
 ```
 Expect `final_icd_code: "E11.22"` with `drg_flag: "CC_MISSED"` — the pipeline caught a complication the human code (`E11.9`, unspecified) didn't capture.
 
-**Tests**
+## Tests
+
 ```bash
-pytest tests/ -v -m "not integration"   # offline
-pytest tests/ -v                        # + live Supabase integration tests
+cd backend
+pytest                    # 182 unit tests, no network, ~3s — what CI runs
+pytest -m integration     # + live Supabase and Groq (needs real credentials)
+pytest --cov              # with a coverage report
 ```
+
+The suite is split into two tiers, and the split is enforced rather than
+documented: `config.Settings` raises on missing credentials, so `conftest.py`
+substitutes placeholders before any app module is imported. Anything that
+genuinely needs the network is marked `integration` and **skips itself** when
+real credentials are absent.
+
+That means CI runs with **no secrets configured at all** — a green build is
+evidence the unit suite is actually hermetic. When a test quietly starts
+reaching out to Supabase, CI goes red instead of the failure showing up on
+someone else's machine. (That has already happened once: a helper doing
+`from database import select_one` held its own binding and slipped past the
+fixture — green locally, red in CI, which is exactly the point.)
+
+Because every data access goes through one async layer (`database.py`), one
+seam substitutes the whole database. Route logic — tenant checks, fail-closed
+guards, optimistic-lock filters, compensation on audit failure — is tested in
+milliseconds against a fake, and the tests assert the *shape of the query* the
+route issued, since an optimistic lock is only a lock if the status predicate
+is really in the `WHERE` clause.
+
+Coverage is deliberately uneven. It is highest where a mistake costs money:
+
+| Module | Coverage | Why it matters |
+|---|---|---|
+| `services/fhir_claim_builder.py` | 96% | claim artifact |
+| `models.py` | 95% | request bounds on money fields |
+| `services/edi_837_builder.py` | 89% | the file payers legally require |
+| `services/payer_policy_gate.py` | 89% | decides auto-approval of payment |
+| `services/edi_835_builder.py` | 86% | remittance advice |
+
+Most of the remainder is offline ETL (`icd_parsers`, `icd_loader_service`)
+and pipeline nodes exercised by the integration tier.
 
 ## Troubleshooting
 
