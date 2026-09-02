@@ -192,6 +192,42 @@ async def insert(table: str, data: dict) -> dict | None:
     )
 
 
+async def update(
+    table: str,
+    data: dict,
+    filters: dict,
+) -> list[dict]:
+    """
+    UPDATE rows matching PostgREST filters; returns the updated rows.
+
+    The returned list's LENGTH is part of the contract: an optimistic-lock
+    update (e.g. filters={"id": "eq.X", "status": "eq.SUBMITTED"}) that
+    matched no rows returns [] — the caller must treat that as a conflict,
+    not a success. Filters are REQUIRED so a bug can never update every row.
+    """
+    if not filters:
+        raise ValueError("update() requires filters — refusing a full-table update")
+    client = await get_client()
+    response = await client.patch(
+        f"/{table}",
+        params=filters,
+        content=json.dumps(data, default=str),
+        headers={**_headers(), "Prefer": "return=representation"},
+    )
+    if response.status_code in (200, 204):
+        try:
+            return response.json()
+        except Exception:
+            return []
+    detail = response.text[:300]
+    log.error("update_failed", table=table, status=response.status_code, detail=detail)
+    raise DatabaseError(
+        f"Update of '{table}' failed ({response.status_code}): {detail}",
+        table=table,
+        status=response.status_code,
+    )
+
+
 async def upsert_icd_code_from_who(
     code: str, description: str, icd_version: str
 ) -> None:

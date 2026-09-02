@@ -7,35 +7,47 @@ the CPT resolver has identified the billing codes. Its job is to:
   2. Apply that multiplier to each resolved CPT base price.
   3. Calculate the total estimated gross hospital revenue for this patient visit.
   4. Falls back to ICD code base_reimbursement values when CPT codes are absent.
+
+Money is computed in Decimal and quantized to cents once per amount — float
+arithmetic drifts, and these numbers flow into EDI 837 claims that must
+reconcile exactly. JSON-facing values are converted back to float at the edge.
 """
-from supabase import create_client, Client
+from decimal import Decimal, ROUND_HALF_UP
+
 from agents.graph import CodingState
 from agents.node_runner import safe_node
+from database import select_one
 from logger import get_logger
-from config import settings
 
 log = get_logger(__name__)
 
 # Default multiplier if org setting cannot be retrieved — represents the national
 # CMS average, so we never return inflated numbers in a failure scenario.
-DEFAULT_MULTIPLIER = 1.0
+DEFAULT_MULTIPLIER = Decimal("1.0")
+CENT = Decimal("0.01")
 
 
-def _get_org_multiplier(supabase: Client, org_id: str) -> float:
+def _cents(value) -> Decimal:
+    return Decimal(str(value or 0)).quantize(CENT, rounding=ROUND_HALF_UP)
+
+
+async def _get_org_multiplier(org_id: str) -> Decimal:
     """
     Fetch the cpt_pricing_multiplier for a given org from org_settings.
     Falls back to DEFAULT_MULTIPLIER (1.0) on any failure.
+
+    Uses the shared async data layer — this node used to build a synchronous
+    supabase client per request and call it inside async code, which blocked
+    the event loop for every other in-flight request while the query ran.
     """
     try:
-        response = (
-            supabase.table("org_settings")
-            .select("cpt_pricing_multiplier")
-            .eq("organization_id", org_id)
-            .limit(1)
-            .execute()
+        row = await select_one(
+            "org_settings",
+            query="cpt_pricing_multiplier",
+            filters={"organization_id": f"eq.{org_id}"},
         )
-        if response.data and len(response.data) > 0:
-            return float(response.data[0]["cpt_pricing_multiplier"])
+        if row and row.get("cpt_pricing_multiplier") is not None:
+            return Decimal(str(row["cpt_pricing_multiplier"]))
     except Exception as e:
         log.warning("multiplier_fetch_failed", org_id=org_id, error=str(e))
     return DEFAULT_MULTIPLIER
@@ -54,11 +66,14 @@ async def financial_calculator_node(state: CodingState) -> CodingState:
     # This ensures the claim always carries a non-zero billed amount for coded visits.
     if not cpt_codes:
         icd_codes = state.get("icd_codes", [])
-        icd_total = round(sum(float(c.get("base_reimbursement", 0)) for c in icd_codes), 2)
-        log.info("financial_calc_icd_fallback", session_id=session_id, icd_total=icd_total)
+        icd_total = _cents(sum(
+            (Decimal(str(c.get("base_reimbursement") or 0)) for c in icd_codes),
+            Decimal("0"),
+        ))
+        log.info("financial_calc_icd_fallback", session_id=session_id, icd_total=float(icd_total))
         state["financial_summary"] = {
-            "total_estimated_revenue": icd_total,
-            "pricing_multiplier": DEFAULT_MULTIPLIER,
+            "total_estimated_revenue": float(icd_total),
+            "pricing_multiplier": float(DEFAULT_MULTIPLIER),
             "line_items": []
         }
         return state
@@ -72,44 +87,44 @@ async def financial_calculator_node(state: CodingState) -> CodingState:
     # crossing, with nothing in the output to indicate it had happened.
     org_id = state.get("org_id")
     if org_id:
-        supabase: Client = create_client(
-            settings.supabase_url,
-            settings.supabase_service_key or settings.supabase_anon_key,
-        )
-        multiplier = _get_org_multiplier(supabase, org_id)
+        multiplier = await _get_org_multiplier(org_id)
     else:
         log.warning(
             "financial_calc_no_org_using_default",
             session_id=session_id,
-            multiplier=DEFAULT_MULTIPLIER,
+            multiplier=float(DEFAULT_MULTIPLIER),
         )
         multiplier = DEFAULT_MULTIPLIER
 
-    log.info("financial_calc_started", session_id=session_id, multiplier=multiplier, cpt_count=len(cpt_codes))
+    log.info("financial_calc_started", session_id=session_id,
+             multiplier=float(multiplier), cpt_count=len(cpt_codes))
 
-    # Apply the multiplier to each CPT code to produce the hospital-specific charge
+    # Apply the multiplier to each CPT code to produce the hospital-specific
+    # charge. Each line's gross charge is quantized to cents, and the TOTAL is
+    # the sum of those quantized lines — never a separately-rounded figure —
+    # so the total always equals the sum of the line items on the claim.
     line_items = []
-    total = 0.0
+    total = Decimal("0")
 
     for cpt in cpt_codes:
-        base = float(cpt.get("base_price", 0.0))
-        gross_charge = round(base * multiplier, 2)
+        base = _cents(cpt.get("base_price"))
+        gross_charge = _cents(base * multiplier)
         total += gross_charge
 
         line_items.append({
             "code":          cpt.get("code"),
             "description":   cpt.get("description"),
             "type":          cpt.get("type"),
-            "base_price":    base,
-            "multiplier":    multiplier,
-            "gross_charge":  gross_charge,
+            "base_price":    float(base),
+            "multiplier":    float(multiplier),
+            "gross_charge":  float(gross_charge),
             "confidence":    cpt.get("confidence"),
             "original_text": cpt.get("original_text"),
         })
 
     financial_summary = {
-        "total_estimated_revenue": round(total, 2),
-        "pricing_multiplier":      multiplier,
+        "total_estimated_revenue": float(total),
+        "pricing_multiplier":      float(multiplier),
         "line_items":              line_items
     }
 
@@ -120,7 +135,7 @@ async def financial_calculator_node(state: CodingState) -> CodingState:
     log.info(
         "financial_calc_complete",
         session_id=session_id,
-        total_revenue=total,
-        multiplier=multiplier
+        total_revenue=float(total),
+        multiplier=float(multiplier)
     )
     return state
