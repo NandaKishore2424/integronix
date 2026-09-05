@@ -37,3 +37,8 @@ backend/.coverage
 backend/coverage.xml
 backend/htmlcov/
 backend/.pytest_cache/
+
+# ── Local-only developer notes (this machine only) ──────
+.dev/
+.claude/
+.mcp.json
