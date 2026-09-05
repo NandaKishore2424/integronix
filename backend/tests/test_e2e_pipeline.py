@@ -377,7 +377,8 @@ class TestHealthEndpoint:
         res = client.get("/health")
         assert res.status_code == 200
         data = res.json()
-        assert data.get("status") in ("ok", "running"), f"Health check returned: {data}"
+        assert data.get("status") == "ready", f"Health check returned: {data}"
+        assert data["checks"]["database"]["ok"] is True
 
 
 @pytest.mark.integration

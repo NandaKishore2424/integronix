@@ -231,7 +231,7 @@ def _is_first_party(module) -> bool:
 
 
 @pytest.fixture
-def fake_db(monkeypatch):
+def fake_db():
     """
     Substitute the async data layer everywhere it is reachable.
 
@@ -240,22 +240,43 @@ def fake_db(monkeypatch):
     still pointing at the original function. Patching only the route module
     has the mirror problem: a helper the route calls (get_org_settings, say)
     holds its own binding and goes straight to the network — which passes
-    locally against real Supabase and fails in CI. That is the bug this
-    fixture was rewritten to prevent.
+    locally against real Supabase and fails in CI.
 
-    So: patch the database module, then walk every already-imported module and
-    rebind any attribute that IS one of the original functions. Self-
-    maintaining — a new consumer is covered the moment it is imported.
+    So: patch the database module, then walk every already-imported
+    first-party module and rebind any attribute that IS one of the original
+    functions. Self-maintaining — a new consumer is covered the moment it is
+    imported.
+
+    The originals are captured and restored HERE rather than through
+    monkeypatch. The set of patch targets is computed at run time, and a
+    target missed by teardown leaves a stale fake bound in another module —
+    which then fails the identity check on the next test, so that module is
+    silently skipped and its calls escape to the real network. That produced
+    a health-check test which passed alone and failed in the suite. Explicit
+    save/restore of exactly what was patched removes the ambiguity.
     """
     import sys
     import database
-    import routes.claims  # noqa: F401 — ensure the route module is imported first
+    # Import the whole app BEFORE capturing originals. The walk can only patch
+    # modules that already exist, and a module first imported DURING a patched
+    # test binds `from database import select` to the fake that happens to be
+    # active at that moment — then outlives the fixture, because it was not in
+    # the patch list to restore. routes.health was imported this way (via
+    # main) inside a claims test and stayed bound to a dead fake for the rest
+    # of the session, which made its health test pass alone and fail in the
+    # suite. Importing main here forces every route module to exist first.
+    import main  # noqa: F401
 
     db = FakeDB()
     originals = {name: getattr(database, name) for name in DB_FUNCTIONS}
+    patched: list[tuple[object, str, object]] = []
+
+    def _patch(target, name, replacement):
+        patched.append((target, name, getattr(target, name)))
+        setattr(target, name, replacement)
 
     for name in DB_FUNCTIONS:
-        monkeypatch.setattr(database, name, getattr(db, name))
+        _patch(database, name, getattr(db, name))
 
     # Only first-party modules. Probing attributes on arbitrary third-party
     # modules is both wasteful and side-effecting — some (scipy) raise
@@ -265,6 +286,10 @@ def fake_db(monkeypatch):
             continue
         for name, original in originals.items():
             if getattr(module, name, None) is original:
-                monkeypatch.setattr(module, name, getattr(db, name))
+                _patch(module, name, getattr(db, name))
 
-    return db
+    try:
+        yield db
+    finally:
+        for target, name, original in reversed(patched):
+            setattr(target, name, original)

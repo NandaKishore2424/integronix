@@ -100,3 +100,67 @@ jobs:
           NEXT_PUBLIC_SUPABASE_URL: https://placeholder.supabase.co
           NEXT_PUBLIC_SUPABASE_ANON_KEY: placeholder-anon-key
         run: pnpm build
+
+  docker:
+    name: Backend — image builds
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # Only after the tests pass: a broken image is not worth 20 minutes of
+    # runner time if the code itself is red.
+    needs: backend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      # Built but not pushed. The point is to catch a Dockerfile that no
+      # longer builds — a missing system package, a bad COPY path — at commit
+      # time rather than during a deploy. Layer caching via GitHub Actions
+      # cache keeps the repeat cost to a couple of minutes despite torch.
+      - name: Build image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./backend
+          push: false
+          load: true
+          tags: integronix-backend:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            APP_VERSION=${{ github.sha }}
+
+      # Proves the image actually starts and serves, not merely that it built.
+      # No credentials, so readiness correctly reports 503 — what matters here
+      # is that the process boots, binds, and answers with a request id.
+      - name: Smoke test the image
+        run: |
+          docker run -d --name smoke -p 8000:8000 \
+            -e SUPABASE_URL=http://127.0.0.1:1/placeholder \
+            -e SUPABASE_ANON_KEY=placeholder \
+            -e GROQ_API_KEY=placeholder \
+            integronix-backend:ci
+
+          for i in $(seq 1 30); do
+            if curl -fsS http://localhost:8000/health/live >/dev/null 2>&1; then
+              echo "liveness OK after ${i}s"; break
+            fi
+            sleep 1
+          done
+
+          echo "--- liveness ---"
+          curl -fsS http://localhost:8000/health/live
+
+          echo "--- readiness (expect 503: no database configured) ---"
+          code=$(curl -s -o /tmp/ready.json -w '%{http_code}' http://localhost:8000/health)
+          cat /tmp/ready.json; echo
+          test "$code" = "503" || { echo "expected 503, got $code"; exit 1; }
+
+          echo "--- correlation id header ---"
+          curl -s -o /dev/null -D - http://localhost:8000/health/live | grep -i x-request-id
+
+          echo "--- endpoints still require auth ---"
+          code=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8000/api/v1/cases)
+          test "$code" = "401" || { echo "expected 401, got $code"; exit 1; }
+
+          docker rm -f smoke >/dev/null

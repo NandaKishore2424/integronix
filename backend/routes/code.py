@@ -23,6 +23,7 @@ from config import settings
 from logger import get_logger
 from services.org_settings_service import get_org_settings
 from auth import Principal, require_roles
+from rate_limit import enforce_pipeline_rate_limit
 
 log = get_logger(__name__)
 
@@ -30,7 +31,30 @@ router = APIRouter(prefix="/code", tags=["ICD Coding Pipeline"])
 
 MAX_PDF_SIZE = 20 * 1024 * 1024  # 20 MB
 
+_UPLOAD_CHUNK = 64 * 1024
+
 _graph = None
+
+
+async def _read_capped(file: UploadFile, limit: int) -> bytes | None:
+    """
+    Read an upload, aborting as soon as it exceeds `limit`.
+
+    Returns the bytes, or None if the cap was passed. Memory use is bounded
+    by `limit` plus one chunk regardless of what the client sends, and a
+    client that lies in Content-Length gains nothing.
+    """
+    chunks: list[bytes] = []
+    total = 0
+    while True:
+        chunk = await file.read(_UPLOAD_CHUNK)
+        if not chunk:
+            break
+        total += len(chunk)
+        if total > limit:
+            return None
+        chunks.append(chunk)
+    return b"".join(chunks)
 
 
 def _get_graph():
@@ -202,6 +226,7 @@ async def _run_pipeline(initial_state: CodingState, session_id: str) -> CodeResp
 async def run_full_pipeline(
     body: CodeRequest,
     principal: Principal = Depends(require_roles("coder", "rcm", "admin")),
+    _rate_limited: Principal = Depends(enforce_pipeline_rate_limit),
 ):
     """
     Full 8-node LangGraph pipeline — accepts raw clinical text (JSON).
@@ -256,6 +281,7 @@ async def run_pdf_pipeline(
     session_id: Optional[str] = Form(None),
     org_id: Optional[str] = Form(None, description="Organization ID"),
     principal: Principal = Depends(require_roles("coder", "rcm", "admin")),
+    _rate_limited: Principal = Depends(enforce_pipeline_rate_limit),
 ):
     """
     Full 8-node LangGraph pipeline — accepts a PDF file via multipart/form-data.
@@ -274,11 +300,15 @@ async def run_pdf_pipeline(
         )
 
     # ── Read bytes & enforce size limit ───────────────────────────────────────
-    pdf_bytes = await file.read()
-    if len(pdf_bytes) > MAX_PDF_SIZE:
+    # Read in chunks and stop at the cap. `await file.read()` pulled the WHOLE
+    # upload into memory and checked the size afterwards, so a 2 GB body
+    # exhausted the container before the limit was ever consulted — the check
+    # ran too late to protect anything.
+    pdf_bytes = await _read_capped(file, MAX_PDF_SIZE)
+    if pdf_bytes is None:
         raise HTTPException(
             status_code=413,
-            detail=f"PDF too large. Maximum allowed size is 20 MB (got {len(pdf_bytes) // 1024 // 1024} MB).",
+            detail=f"PDF too large. Maximum allowed size is {MAX_PDF_SIZE // 1024 // 1024} MB.",
         )
     if len(pdf_bytes) == 0:
         raise HTTPException(status_code=400, detail="Uploaded PDF file is empty.")

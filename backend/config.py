@@ -59,6 +59,23 @@ class Settings(BaseSettings):
     who_icd_11_release: str = "2026-01"            # Latest ICD-11 release (YYYY-MM format)
     who_icd_10_release: str = "2019"               # ICD-10 release used
 
+    # ── HTTP ──────────────────────────────────────────────────────────────────
+    # Browser origins allowed to call this API. Comma-separated so it can be
+    # set from a single environment variable in a container. The deployed
+    # frontend lives on a different origin than the API, and CORS is enforced
+    # by the browser — an origin missing here means every call from the real
+    # site fails, regardless of whether auth is correct.
+    cors_allow_origins: str = (
+        "http://localhost:3000,http://localhost:3001,"
+        "http://127.0.0.1:3000,http://127.0.0.1:3001"
+    )
+
+    # ── Rate limiting ─────────────────────────────────────────────────────────
+    # Applies to the pipeline endpoints, which spend an LLM call per request.
+    rate_limit_enabled: bool = True
+    rate_limit_pipeline_per_minute: int = 20
+    rate_limit_pipeline_burst: int = 10
+
     # ── App ───────────────────────────────────────────────────────────────────
     app_env: str = "development"
     app_host: str = "0.0.0.0"
@@ -78,6 +95,12 @@ class Settings(BaseSettings):
         if not value:
             raise ValueError("must not be empty.")
         return value
+
+
+    @property
+    def cors_origins_list(self) -> list[str]:
+        """cors_allow_origins parsed into the list CORSMiddleware expects."""
+        return [o.strip() for o in self.cors_allow_origins.split(",") if o.strip()]
 
 
 @lru_cache()
