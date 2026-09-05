@@ -129,10 +129,15 @@ class TestTenantIsolation:
 class TestAuditTrailIsMandatory:
     def test_claim_is_withdrawn_when_the_audit_write_fails(self, client, fake_db):
         """
-        HIPAA: a paid claim with no audit row must not be a representable
-        state. If the audit insert fails, the claim is marked SUBMISSION_FAILED
-        and the request errors, rather than leaving an untracked claim in the
-        payer queue.
+        HIPAA: a claim with no audit row must not be a representable state. If
+        the audit insert fails, the claim is DELETED and the request errors,
+        rather than leaving an untracked claim in the payer queue.
+
+        Deletion, not a status change: claims.status has a CHECK constraint
+        listing the valid states, so the original "SUBMISSION_FAILED" marker
+        was itself rejected — the compensation failed, and the orphaned
+        SUBMITTED claim then tripped the duplicate guard and blocked retry for
+        that session permanently. See tests/test_schema_contract.py.
         """
         fake_db.on("select", []).on("select_one", COMPLETE_CASE, GOOD_RESULT, None, None)
         fake_db.on("insert",
@@ -143,8 +148,26 @@ class TestAuditTrailIsMandatory:
         assert res.status_code == 500
         assert "audit trail" in res.json()["detail"]
 
-        compensations = [c for c in fake_db.calls if c[0] == "update" and c[1] == "claims"]
-        assert compensations, "the orphaned claim must be compensated"
+        deletes = [c for c in fake_db.calls if c[0] == "delete" and c[1] == "claims"]
+        assert deletes, "the orphaned claim must be removed"
+        assert deletes[0][2] == {"id": "eq.44444444-4444-4444-4444-444444444444"}
+
+    def test_audit_row_records_the_auth_id_not_the_app_user_id(self, client, fake_db):
+        """
+        claim_audit_logs.changed_by_user_id has a foreign key to auth.users,
+        so it must carry Principal.auth_id. Passing Principal.user_id (the
+        public.users row id) is a valid uuid that looks right in every mocked
+        test and fails only against the real database.
+
+        The fixture principal's auth_id is not a uuid, so it coerces to None —
+        what matters here is that user_id never reaches the column.
+        """
+        fake_db.on("select", []).on("select_one", COMPLETE_CASE, GOOD_RESULT, None, None)
+        client.post("/api/v1/claims/submit", json=_submission())
+
+        audits = [c for c in fake_db.calls if c[0] == "insert" and c[1] == "claim_audit_logs"]
+        assert audits, "an audit row should have been attempted"
+        assert audits[0][2]["changed_by_user_id"] != "test-user-hospital"
 
     def test_successful_submission_writes_an_audit_row(self, client, fake_db):
         fake_db.on("select", []).on("select_one", COMPLETE_CASE, GOOD_RESULT, None, None)
