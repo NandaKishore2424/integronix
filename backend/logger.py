@@ -9,11 +9,27 @@ Usage:
     log = get_logger(__name__)
     log.info("icd_resolved", session_id=sid, code="E11.22", method="direct")
 """
+import contextvars
 import logging
 import json
 import sys
 import time
 from typing import Any
+
+# Correlation id for the in-flight HTTP request.
+#
+# A ContextVar — not a global — because the server handles many requests
+# concurrently on one event loop. Each request gets its own value, and asyncio
+# carries it across `await` boundaries automatically, so every log line
+# emitted while handling a request is stamped with that request's id without
+# any function having to accept and forward it.
+request_id_var: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "request_id", default=None
+)
+
+
+def get_request_id() -> str | None:
+    return request_id_var.get()
 
 
 # Define the logger at the top of the file
@@ -30,6 +46,12 @@ class JSONFormatter(logging.Formatter):
             "module": record.name,
             "message": record.getMessage(),
         }
+
+        # Stamp the correlation id on every line produced while serving a
+        # request, so one grep reconstructs the whole path through the system.
+        request_id = request_id_var.get()
+        if request_id:
+            log_data["request_id"] = request_id
 
         # Merge any extra fields passed via log.info("event", key=val, ...)
         if hasattr(record, "extra_fields"):

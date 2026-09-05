@@ -1,0 +1,23 @@
+# Secrets — must never enter an image layer
+.env
+.env.*
+!.env.example
+
+# Local virtualenv: wrong platform, and huge
+venv/
+.venv/
+
+# Caches and test artifacts
+__pycache__/
+**/__pycache__/
+*.pyc
+.pytest_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# Not needed at runtime
+tests/
+*.md
+.git/
+.gitignore

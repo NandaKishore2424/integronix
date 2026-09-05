@@ -225,6 +225,61 @@ Coverage is deliberately uneven. It is highest where a mistake costs money:
 Most of the remainder is offline ETL (`icd_parsers`, `icd_loader_service`)
 and pipeline nodes exercised by the integration tier.
 
+## Running it in a container
+
+```bash
+cd backend
+docker compose up --build          # reads backend/.env, serves on :8000
+```
+
+The image is multi-stage: dependencies compile in a builder stage and only the
+finished virtualenv is copied into the runtime image, so no compiler ships to
+production. Two details that matter more than they look:
+
+- **The CPU torch wheel is selected explicitly.** The default `torch` wheel
+  bundles CUDA and is ~2.5 GB on its own — on a `t3.micro` that is the
+  difference between deploying and not.
+- **The embedding model is baked into the image at build time.** Otherwise
+  every container start depends on HuggingFace being reachable, and the first
+  request after a deploy pays the download.
+
+It runs as a non-root user, and configuration arrives at *run* time via
+environment variables rather than being built in, so one image is promoted
+unchanged from local to production. CI builds the image on every push and
+smoke-tests it — that it starts, binds, answers `/health/live`, correctly
+reports 503 readiness with no database, and still returns 401 on protected
+routes.
+
+## Operability
+
+**Health checks are split, because the two questions have different answers.**
+
+| Probe | Question | On failure |
+|---|---|---|
+| `/health/live` | Is the process alive? Touches nothing downstream. | restart me |
+| `/health` | Can this instance serve? Checks the database. | stop routing to me |
+
+Conflating them turns a brief database blip into a restart loop. The readiness
+probe previously returned **200 unconditionally**, putting `"database":
+"error"` in the body — load balancers read the status code, so a fully broken
+instance stayed in rotation. It now returns 503.
+
+**Every request carries a correlation id.** Middleware stamps each request
+with an id, propagates it through a `ContextVar` so every log line emitted
+while serving that request is tagged automatically, and returns it as
+`X-Request-ID`. Error responses quote it, so "my submission failed" becomes
+`grep <id>` and the whole path through the system falls out. An inbound id is
+honoured (so a trace spans the proxy) but only after validation — it reaches
+the logs, and an unvalidated value is a log-injection vector.
+
+**The pipeline endpoints are rate limited** with a per-user token bucket.
+A fixed window would let a caller fire the full quota either side of a window
+boundary; a bucket refills continuously, capping the sustained rate while
+still allowing the short burst a human clicking a button actually produces.
+It is in-process, not Redis — with one instance that is exact, and a network
+dependency would buy nothing. The trigger to move it is a second instance,
+and that reasoning is recorded in `rate_limit.py` rather than left implicit.
+
 ## Troubleshooting
 
 | Problem | Fix |

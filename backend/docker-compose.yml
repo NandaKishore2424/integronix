@@ -1,0 +1,29 @@
+# Local container run — mirrors production without needing AWS.
+#
+#   docker compose up --build
+#
+# Reads backend/.env, which is gitignored and never enters the image; the
+# container gets its configuration at RUN time, not BUILD time. That
+# separation is what lets one image be promoted unchanged from local to
+# staging to production.
+services:
+  api:
+    build:
+      context: .
+      args:
+        APP_VERSION: ${APP_VERSION:-local}
+    image: integronix-backend:local
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    environment:
+      APP_ENV: ${APP_ENV:-development}
+      CORS_ALLOW_ORIGINS: ${CORS_ALLOW_ORIGINS:-http://localhost:3000}
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 40s
+      retries: 3
