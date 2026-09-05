@@ -1,0 +1,36 @@
+DISCHARGE SUMMARY
+
+Patient: Ramesh Iyer
+DOB: 02-Sep-1961
+Sex: Male
+MRN: CGH-2024-0912
+
+CHIEF COMPLAINT
+Poorly controlled blood sugars and bilateral foot numbness.
+
+HISTORY OF PRESENT ILLNESS
+Mr. Iyer is a 63-year-old male with a 14-year history of Type 2 diabetes
+mellitus, presenting with persistent hyperglycaemia and progressive numbness
+of both feet over the past 8 months. He reports burning pain at night.
+
+PHYSICAL EXAMINATION
+Vitals: BP 142/88, HR 78, RR 16, SpO2 98%.
+Neurological: Reduced monofilament sensation bilaterally to the mid-calf.
+Absent ankle reflexes. No ulceration.
+
+INVESTIGATIONS
+HbA1c 9.4%. Fasting glucose 212 mg/dL.
+Serum creatinine 1.9 mg/dL. eGFR 38 mL/min/1.73m2.
+Urine albumin-to-creatinine ratio 340 mg/g.
+Nerve conduction study: distal symmetric sensorimotor polyneuropathy.
+
+DIAGNOSIS
+Type 2 diabetes mellitus with diabetic polyneuropathy.
+Type 2 diabetes mellitus with diabetic chronic kidney disease, stage 3b.
+
+PROCEDURES PERFORMED
+Comprehensive metabolic panel.
+Nerve conduction study.
+
+PLAN
+Insulin titration. Nephrology referral. Podiatry follow-up in 2 weeks.

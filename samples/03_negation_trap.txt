@@ -1,0 +1,33 @@
+DISCHARGE SUMMARY
+
+Patient: Anita Desai
+DOB: 21-Nov-1975
+Sex: Female
+MRN: CGH-2024-1121
+
+CHIEF COMPLAINT
+Routine review of Type 2 diabetes mellitus.
+
+HISTORY OF PRESENT ILLNESS
+Ms. Desai is a well-controlled Type 2 diabetic on metformin monotherapy.
+She is asymptomatic and reports no visual disturbance, no numbness, and no
+lower limb symptoms.
+
+PHYSICAL EXAMINATION
+Vitals: BP 122/78, HR 72. Feet: intact sensation, normal pulses, no ulcers.
+Dilated fundus examination performed.
+
+INVESTIGATIONS
+HbA1c 6.6%. Serum creatinine 0.8 mg/dL. eGFR 92 mL/min/1.73m2.
+Urine albumin-to-creatinine ratio 8 mg/g (normal).
+Fundus photography: no evidence of diabetic retinopathy.
+
+DIAGNOSIS
+Type 2 diabetes mellitus without complications.
+No evidence of renal disease. No evidence of neuropathy or retinopathy.
+
+PROCEDURES PERFORMED
+Dilated retinal examination.
+
+PLAN
+Continue metformin. Annual review.

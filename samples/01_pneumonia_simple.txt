@@ -1,0 +1,34 @@
+DISCHARGE SUMMARY
+
+Patient: Priya Raman
+DOB: 15-Apr-1988
+Sex: Female
+MRN: CGH-2024-0417
+
+CHIEF COMPLAINT
+Fever and productive cough for 3 days.
+
+HISTORY OF PRESENT ILLNESS
+Ms. Raman presents with a 3-day history of high-grade fever (38.9 C),
+productive cough with yellowish sputum, and shortness of breath on exertion.
+She has no significant past medical history. No known drug allergies.
+
+PHYSICAL EXAMINATION
+Vitals: BP 118/76, HR 92, RR 20, SpO2 96% on room air, Temp 38.9 C.
+Chest: Dullness to percussion at the right base. Bronchial breath sounds
+noted over the right lower zone. No wheeze.
+
+INVESTIGATIONS
+Chest X-Ray: Right lower lobe consolidation consistent with pneumonia.
+CBC: WBC 14,200 (elevated) with neutrophilia. CRP 96 mg/L.
+
+DIAGNOSIS
+Community-acquired pneumonia, right lower lobe.
+
+PROCEDURES PERFORMED
+Chest X-Ray, single view.
+Intravenous antibiotic administration.
+
+PLAN
+Admit for IV Amoxicillin-Clavulanate. Daily chest physiotherapy.
+Expected length of stay: 3 days.
