@@ -80,12 +80,18 @@ export default function PayerInboxPage() {
         }
     };
 
+    // Every status permitted by the claims_status_check constraint must appear
+    // here. An unmapped status used to fall through to the DRAFT entry, so an
+    // APPEALED claim rendered as "Hospital Draft" — a label that is not merely
+    // vague but wrong about where the claim sits in the workflow.
     const STATUS_UI = {
+        'DRAFT': { label: 'Hospital Draft', styling: 'text-slate-400 bg-slate-500/10 border-slate-500/20' },
         'SUBMITTED': { label: 'Awaiting Review', styling: 'text-amber-400 bg-amber-500/10 border-amber-500/20' },
+        'ADJUDICATING': { label: 'In Adjudication', styling: 'text-amber-400 bg-amber-500/10 border-amber-500/20' },
         'PAID': { label: 'Paid - Clean', styling: 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20' },
         'PARTIALLY_PAID': { label: 'Adjudicated/Adjusted', styling: 'text-blue-400 bg-blue-500/10 border-blue-500/20' },
         'DENIED': { label: 'Denied', styling: 'text-red-400 bg-red-500/10 border-red-500/20' },
-        'DRAFT': { label: 'Hospital Draft', styling: 'text-slate-400 bg-slate-500/10 border-slate-500/20' }
+        'APPEALED': { label: 'Under Appeal', styling: 'text-purple-400 bg-purple-500/10 border-purple-500/20' }
     } as any;
 
     const filteredClaims = claims.filter(c => filterStatus === 'ALL' || c.status === filterStatus);
@@ -170,7 +176,11 @@ export default function PayerInboxPage() {
                                     </td>
                                 </tr>
                             ) : filteredClaims.map(claim => {
-                                const ui = STATUS_UI[claim.status] || STATUS_UI['DRAFT'];
+                                // Unknown status: show it verbatim rather than mislabelling it.
+                                const ui = STATUS_UI[claim.status] || {
+                                    label: claim.status,
+                                    styling: 'text-slate-400 bg-slate-500/10 border-slate-500/20',
+                                };
                                 const orgName = (claim as any).organizations?.name || 'Unknown Provider';
                                 
                                 return (

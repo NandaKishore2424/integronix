@@ -5,7 +5,7 @@ from pydantic import BaseModel, Field
 from typing import Optional, List, Any, Literal
 from logger import get_logger
 from config import settings
-from database import select, select_one, insert, update, rpc
+from database import select, select_one, insert, update, delete, rpc
 from services.payer_policy_gate import run_payer_policy_gate
 from services.org_settings_service import get_org_settings
 from services.fhir_claim_builder import build_fhir_claim_proposal
@@ -27,8 +27,18 @@ def _money(value) -> Decimal:
 
 
 def _uuid_or_none(value: str | None) -> str | None:
-    """claim_audit_logs.changed_by_user_id is a uuid column; dev/test
-    principals carry synthetic ids that must become NULL, not a DB error."""
+    """
+    Coerce an id to a uuid string, or None.
+
+    claim_audit_logs.changed_by_user_id has a foreign key to **auth.users**,
+    not public.users — so the value must be Principal.auth_id (the JWT
+    subject), never Principal.user_id (the public.users row id). Passing the
+    latter looks correct, is a perfectly valid uuid, and fails only at the
+    database with a foreign-key violation.
+
+    Dev and test principals carry synthetic ids that must become NULL rather
+    than a DB error.
+    """
     try:
         return str(uuid.UUID(str(value)))
     except (ValueError, TypeError):
@@ -271,7 +281,7 @@ async def submit_claim(
             "claim_id": claim_id,
             "previous_status": None,
             "new_status": initial_status,
-            "changed_by_user_id": _uuid_or_none(principal.user_id),
+            "changed_by_user_id": _uuid_or_none(principal.auth_id),
             "action_notes": (
                 "Auto-approved via payer policy gate."
                 if gate_report.get("should_auto_approve")
@@ -280,8 +290,15 @@ async def submit_claim(
         })
     except Exception as audit_e:
         log.error("claims_submit_audit_failed", claim_id=claim_id, error=str(audit_e))
+        # Remove the claim rather than marking it failed. claims.status has a
+        # CHECK constraint listing the valid states, and inventing a new one
+        # ("SUBMISSION_FAILED") is rejected — leaving an orphaned SUBMITTED
+        # claim that the duplicate guard then treats as a real submission,
+        # permanently blocking retry for that session. Deleting keeps the
+        # operation atomic from the caller's point of view: either the claim
+        # and its audit row both exist, or neither does.
         try:
-            await update("claims", {"status": "SUBMISSION_FAILED"}, {"id": f"eq.{claim_id}"})
+            await delete("claims", {"id": f"eq.{claim_id}"})
         except Exception:
             log.error("claims_submit_compensation_failed", claim_id=claim_id)
         raise HTTPException(status_code=500, detail="Claim could not be recorded with an audit trail and was not submitted.")
@@ -495,7 +512,7 @@ async def adjudicate_claim(
             "p_patient_responsibility": str(patient_resp),
             "p_denial_reason": denial_reason,
             "p_action_notes": f"Manual Adjudication: {req.action}. " + (req.denial_reason or ""),
-            "p_changed_by_user_id": _uuid_or_none(principal.user_id),
+            "p_changed_by_user_id": _uuid_or_none(principal.auth_id),
         })
         if not (isinstance(result, dict) and result.get("ok")):
             reason = (result or {}).get("reason") if isinstance(result, dict) else None
@@ -558,7 +575,7 @@ async def appeal_claim(
             "p_expected_statuses": ["DENIED", "PARTIALLY_PAID"],
             "p_new_status": "APPEALED",
             "p_action_notes": f"Hospital Appeal Filed: {req.justification}",
-            "p_changed_by_user_id": _uuid_or_none(principal.user_id),
+            "p_changed_by_user_id": _uuid_or_none(principal.auth_id),
         })
         if not (isinstance(result, dict) and result.get("ok")):
             current = (result or {}).get("current_status") if isinstance(result, dict) else None
@@ -674,7 +691,7 @@ async def payer_edit_claim(
                 "claim_id":        claim_id,
                 "previous_status": "SUBMITTED",
                 "new_status":      "SUBMITTED",  # Status doesn't change, edit is noted
-                "changed_by_user_id": _uuid_or_none(principal.user_id),
+                "changed_by_user_id": _uuid_or_none(principal.auth_id),
                 "action_notes":    f"Payer edited codes. Reason: {req.edit_reason.strip()}",
             })
         except Exception as audit_e:

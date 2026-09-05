@@ -207,6 +207,10 @@ class FakeDB:
         self.calls.append(("update", table, filters))
         return self._take("update", [{"id": "00000000-0000-0000-0000-0000000000ff"}])
 
+    async def delete(self, table, filters):
+        self.calls.append(("delete", table, filters))
+        return self._take("delete", [{"id": "00000000-0000-0000-0000-0000000000ff"}])
+
     async def rpc(self, fn, params):
         self.calls.append(("rpc", fn, params))
         return self._take("rpc", {"ok": True})
@@ -219,7 +223,7 @@ class FakeDB:
         return None
 
 
-DB_FUNCTIONS = ("select", "select_one", "insert", "update", "rpc")
+DB_FUNCTIONS = ("select", "select_one", "insert", "update", "delete", "rpc")
 
 _VENV_MARKER = os.path.join("backend", "venv")
 

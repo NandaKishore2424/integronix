@@ -228,6 +228,36 @@ async def update(
     )
 
 
+async def delete(table: str, filters: dict) -> list[dict]:
+    """
+    DELETE rows matching PostgREST filters; returns the deleted rows.
+
+    Filters are REQUIRED — a missing filter in PostgREST deletes the whole
+    table, so an accidental empty dict must fail loudly rather than quietly
+    emptying production data.
+    """
+    if not filters:
+        raise ValueError("delete() requires filters — refusing a full-table delete")
+    client = await get_client()
+    response = await client.delete(
+        f"/{table}",
+        params=filters,
+        headers={**_headers(), "Prefer": "return=representation"},
+    )
+    if response.status_code in (200, 204):
+        try:
+            return response.json()
+        except Exception:
+            return []
+    detail = response.text[:300]
+    log.error("delete_failed", table=table, status=response.status_code, detail=detail)
+    raise DatabaseError(
+        f"Delete from '{table}' failed ({response.status_code}): {detail}",
+        table=table,
+        status=response.status_code,
+    )
+
+
 async def upsert_icd_code_from_who(
     code: str, description: str, icd_version: str
 ) -> None:
