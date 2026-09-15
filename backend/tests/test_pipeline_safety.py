@@ -184,3 +184,54 @@ class TestCentsHelper:
     ])
     def test_quantisation(self, value, expected):
         assert _cents(value) == Decimal(expected)
+
+
+# ── A failed run is an explicit error, not an unhandled 500 ──────────────────
+
+class TestFailedRunsReturnAHandledError:
+    """
+    With the fail-closed short-circuit, a run that fails early reaches the
+    response builder with most fields never set, and CodeResponse validation
+    raised — the middleware turned that into a bare "Internal server error".
+    Found when the Groq key stopped working: every run failed at
+    clinical_extract and the UI could say nothing useful. The route now names
+    the failed stage and gives a reference, never the upstream error text.
+    """
+
+    NOTE = {"raw_text": "Community-acquired pneumonia, right lower lobe, confirmed on chest X-ray."}
+
+    @pytest.fixture
+    def failing_graph(self, monkeypatch):
+        import routes.code as code
+        from config import settings
+
+        monkeypatch.setattr(settings, "rate_limit_enabled", False)
+        failure = {"error_at": "clinical_extract",
+                   "error_detail": "Error code: 401 - Invalid API Key"}
+
+        class _Graph:
+            async def ainvoke(self, initial_state, config=None):
+                return {**initial_state, **failure}
+
+        monkeypatch.setattr(code, "_get_graph", lambda: _Graph())
+        return failure
+
+    def test_llm_failure_is_a_502_naming_the_stage(self, client, fake_db, failing_graph):
+        res = client.post("/api/v1/code/run", json=self.NOTE)
+        assert res.status_code == 502
+        detail = res.json()["detail"]
+        assert "clinical extraction" in detail
+        assert "nothing can be billed" in detail
+        assert "Reference:" in detail
+
+    def test_upstream_error_text_is_never_returned(self, client, fake_db, failing_graph):
+        res = client.post("/api/v1/code/run", json=self.NOTE)
+        assert "Invalid API Key" not in res.text
+        assert "401" not in res.json()["detail"]
+
+    def test_other_stage_failures_are_handled_and_named(self, client, fake_db, failing_graph):
+        failing_graph["error_at"] = "icd_decision"
+        res = client.post("/api/v1/code/run", json=self.NOTE)
+        assert res.status_code == 500
+        assert "'icd_decision' step failed" in res.json()["detail"]
+        assert "Internal server error" not in res.text

@@ -7,7 +7,8 @@ from config import settings
 from database import close_client, get_client
 from logger import get_logger
 from middleware import RequestContextMiddleware
-from routes import analytics, cases, claims, code, health, icd, parse, payers
+from routes import admin, analytics, cases, claims, code, health, icd, parse, payers
+from services.warmup import warm_up_services
 
 log = get_logger(__name__)
 
@@ -28,6 +29,12 @@ async def lifespan(app: FastAPI):
             log.warning("startup_database_unexpected_status", status=resp.status_code)
     except Exception as e:
         log.error("startup_database_unreachable", error=str(e))
+
+    # Pay cold-start costs now rather than on the first request: load the
+    # embedding model, compile the pipeline graph and page pgvector indexes
+    # into memory. Best-effort — failures are logged and reported by /health.
+    if settings.warm_up_on_startup:
+        await warm_up_services()
 
     log.info(
         "startup_complete",
@@ -75,3 +82,4 @@ app.include_router(cases.router,     prefix="/api/v1")
 app.include_router(analytics.router, prefix="/api/v1")
 app.include_router(claims.router,    prefix="/api/v1")
 app.include_router(payers.router,    prefix="/api/v1")
+app.include_router(admin.router,     prefix="/api/v1")

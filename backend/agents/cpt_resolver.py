@@ -3,7 +3,7 @@ This agent assumes the responsibility of matching extracted medical procedures
 to official CMS CPT/HCPCS codes via semantic vector search.
 """
 import asyncio
-from sentence_transformers import SentenceTransformer
+from services.embedding_model import get_embedding_model
 from database import rpc
 from agents.graph import CodingState
 from agents.node_runner import safe_node
@@ -11,12 +11,6 @@ from logger import get_logger
 
 log = get_logger(__name__)
 
-# Load model globally to keep the LangGraph pipeline fast across multiple calls
-try:
-    _embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
-except Exception as e:
-    log.error(f"Failed to load sentence transformer model: {e}")
-    _embedding_model = None
 
 @safe_node("cpt_resolve")
 async def cpt_resolver_node(state: CodingState) -> CodingState:
@@ -29,8 +23,11 @@ async def cpt_resolver_node(state: CodingState) -> CodingState:
         state["cpt_codes"] = []
         return state
 
-    if not _embedding_model:
-        log.error("cpt_resolve_failed", session_id=session_id, reason="model not loaded")
+    try:
+        model = get_embedding_model()
+    except Exception as e:
+        log.error("cpt_resolve_failed", session_id=session_id, reason="embedding model unavailable",
+                  error_type=type(e).__name__, error=str(e))
         state["cpt_codes"] = []
         return state
 
@@ -43,7 +40,7 @@ async def cpt_resolver_node(state: CodingState) -> CodingState:
             # worker thread so it doesn't stall every other request on the
             # event loop.
             embedding_vector = (await asyncio.to_thread(
-                _embedding_model.encode, procedure_text)).tolist()
+                model.encode, procedure_text)).tolist()
 
             # 2. Query our Supabase RPC for a semantic search via the shared
             # async data layer (this node previously built a synchronous
@@ -85,7 +82,7 @@ async def cpt_resolver_node(state: CodingState) -> CodingState:
                 log.warning("cpt_no_match", session_id=session_id, original=procedure_text)
                 
         except Exception as e:
-            log.error("cpt_resolve_error", session_id=session_id, error=str(e), procedure=procedure_text)
+            log.error("cpt_resolve_error", session_id=session_id, error_type=type(e).__name__, error=str(e), procedure=procedure_text)
 
     state["cpt_codes"] = all_cpt_matches
     return state

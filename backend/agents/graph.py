@@ -127,8 +127,29 @@ def build_integronix_graph():
     )
     graph.add_edge("icd_embedding",    "icd_decision")   # Node 5 → always goes to Node 6
     graph.add_edge("icd_decision",     "audit_comparison")
-    graph.add_edge("audit_comparison", "risk_scoring")
-    graph.add_edge("risk_scoring",     "financial_calc")
-    graph.add_edge("financial_calc",   END)
+    # financial_calc must run BEFORE risk_scoring. risk_scoring is the node that
+    # persists the case, and it used to run first: every saved result had an
+    # empty financial_summary and unpriced CPT lines, so Case History showed no
+    # revenue. risk_scoring reads only financial_delta (set by audit_comparison),
+    # so moving it last changes no score.
+    graph.add_edge("audit_comparison", "financial_calc")
+    graph.add_edge("financial_calc",   "risk_scoring")
+    graph.add_edge("risk_scoring",     END)
 
     return graph.compile()
+
+
+_compiled_graph = None
+
+
+def get_compiled_graph():
+    """
+    The compiled pipeline, built once per process and shared by every request.
+
+    Compiling imports every node module — torch among them — so it happens a
+    single time, normally during the startup warm-up, rather than on first use.
+    """
+    global _compiled_graph
+    if _compiled_graph is None:
+        _compiled_graph = build_integronix_graph()
+    return _compiled_graph

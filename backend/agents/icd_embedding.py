@@ -25,23 +25,13 @@ UNRELATED_CHAPTER_PAIRS = {
     "Infectious":    {},
 }
 
-_embedding_model = None
 
 
 def _get_model():
-    # We lazy-load the embedding model so it's only loaded into memory when needed.
-    # The first time this is called, it will download the model (if necessary).
-    global _embedding_model
-    if _embedding_model is None:
-        try:
-            from sentence_transformers import SentenceTransformer
-            _embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
-            log.info("embedding_model_loaded", model="all-MiniLM-L6-v2")
-        except ImportError:
-            log.error("embedding_model_missing",
-                      error="sentence-transformers not installed. Run: pip install sentence-transformers")
-            raise
-    return _embedding_model
+    # One instance, shared with cpt_resolve and loaded by path inside the Docker
+    # image — see services/embedding_model.py for why both matter.
+    from services.embedding_model import get_embedding_model
+    return get_embedding_model()
 
 
 def _embed_text(text: str) -> list[float]:
@@ -116,7 +106,7 @@ async def icd_embedding_node(state: CodingState) -> CodingState:
     try:
         query_vector = _embed_text(primary_text)
     except Exception as e:
-        log.error("embedding_generation_failed", session_id=session_id, error=str(e))
+        log.error("embedding_generation_failed", session_id=session_id, error_type=type(e).__name__, error=str(e))
         state["candidate_icd_codes"] = []
         state["mapping_path"] = "embedding_failed"
         return state
@@ -130,7 +120,7 @@ async def icd_embedding_node(state: CodingState) -> CodingState:
             "match_count":          EMBEDDING_TOP_K + 5,
         })
     except Exception as e:
-        log.error("embedding_rpc_failed", session_id=session_id, error=str(e))
+        log.error("embedding_rpc_failed", session_id=session_id, error_type=type(e).__name__, error=str(e))
         state["candidate_icd_codes"] = []
         state["mapping_path"] = "embedding_failed"
         return state

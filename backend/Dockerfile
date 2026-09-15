@@ -66,6 +66,7 @@ ENV PATH="/opt/venv/bin:$PATH" \
     PYTHONDONTWRITEBYTECODE=1 \
     SENTENCE_TRANSFORMERS_HOME=/opt/models \
     HF_HUB_OFFLINE=1 \
+    EMBEDDING_MODEL_PATH=/opt/models/all-MiniLM-L6-v2 \
     APP_HOST=0.0.0.0 \
     APP_PORT=8000
 
@@ -82,7 +83,7 @@ EXPOSE 8000
 
 # Readiness, not liveness: the container is only "healthy" once it can
 # actually reach the database and serve traffic.
-HEALTHCHECK --interval=30s --timeout=5s --start-period=40s --retries=3 \
+HEALTHCHECK --interval=30s --timeout=5s --start-period=120s --retries=3 \
     CMD curl -fsS http://localhost:8000/health || exit 1
 
 # One worker on purpose. The rate limiter holds state in-process, and a

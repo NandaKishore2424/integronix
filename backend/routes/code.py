@@ -4,20 +4,22 @@ routes/code.py — Full Pipeline Endpoints
   POST /code/run      → accepts JSON body (raw_text)
   POST /code/run-pdf  → accepts multipart/form-data (PDF file)
 
-8-node LangGraph pipeline:
-  Node 1: doc_processing    → raw_text (from text or PDF bytes)
-  Node 2: clinical_extract  → structured_entities via Groq LLM
-  Node 3: snomed_resolve    → SNOMED concept resolution
-  Node 4: snomed_icd_map    → SNOMED→ICD direct mapping
-  Node 5: icd_embedding     → embedding fallback (if no direct map)
-  Node 6: icd_decision      → deterministic ICD selection + multi-code list
-  Node 7: audit_comparison  → human vs AI comparison + DRG flag
-  Node 8: risk_scoring      → risk label + DB writes
+10-node LangGraph pipeline (agents/graph.py):
+   1 doc_processing    → raw_text from text or PDF bytes (OCR fallback)
+   2 clinical_extract  → structured diagnoses/procedures via the LLM
+   3 cpt_resolve       → procedures → CPT/HCPCS
+   4 snomed_resolve    → diagnosis → SNOMED CT concept
+   5 snomed_icd_map    → SNOMED → ICD-10-CM crosswalk
+   6 icd_embedding     → pgvector fallback, only when 5 found no candidates
+   7 icd_decision      → deterministic code selection
+   8 audit_comparison  → AI vs human code, DRG flags
+   9 financial_calc    → organisation pricing, claim total
+  10 risk_scoring      → risk label, then persists case + result + audit row
 """
 import uuid
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
 from typing import Optional, List
-from agents.graph import build_integronix_graph, CodingState
+from agents.graph import CodingState, get_compiled_graph
 from models import CodeRequest, CodeResponse
 from config import settings
 from logger import get_logger
@@ -32,8 +34,6 @@ router = APIRouter(prefix="/code", tags=["ICD Coding Pipeline"])
 MAX_PDF_SIZE = 20 * 1024 * 1024  # 20 MB
 
 _UPLOAD_CHUNK = 64 * 1024
-
-_graph = None
 
 
 async def _read_capped(file: UploadFile, limit: int) -> bytes | None:
@@ -58,10 +58,8 @@ async def _read_capped(file: UploadFile, limit: int) -> bytes | None:
 
 
 def _get_graph():
-    global _graph
-    if _graph is None:
-        _graph = build_integronix_graph()
-    return _graph
+    # Compiled once per process — normally by the startup warm-up.
+    return get_compiled_graph()
 
 
 
@@ -166,6 +164,31 @@ async def _run_pipeline(initial_state: CodingState, session_id: str) -> CodeResp
         raise HTTPException(
             status_code=500,
             detail=f"Pipeline failed. Reference: {session_id}",
+        )
+
+    # A stage failed. Every later stage was skipped, so most response fields
+    # were never set: building CodeResponse from this state raised a validation
+    # error, and the caller saw a bare "Internal server error". Report the
+    # failed stage instead. The upstream error text stays in the logs — it can
+    # carry things like "Invalid API Key".
+    failed_stage = result.get("error_at")
+    if failed_stage:
+        log.error("pipeline_run_failed", session_id=session_id, stage=failed_stage)
+        no_codes = "No codes were produced, so nothing can be billed."
+        if failed_stage == "clinical_extract":
+            raise HTTPException(
+                status_code=502,
+                detail=(
+                    "Coding could not be completed: the clinical extraction step "
+                    f"(language model) failed. {no_codes} Reference: {session_id}"
+                ),
+            )
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                f"Coding could not be completed: the '{failed_stage}' step failed. "
+                f"{no_codes} Reference: {session_id}"
+            ),
         )
 
     icd_codes = result.get("icd_codes") or []

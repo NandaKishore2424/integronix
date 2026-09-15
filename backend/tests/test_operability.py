@@ -261,3 +261,40 @@ class _FakeUpload:
         self._pos += len(chunk)
         self.bytes_read += len(chunk)
         return chunk
+
+
+class TestReadinessTimeout:
+    def test_slow_database_is_not_ready_and_leaves_a_log_line(self, anon_client, monkeypatch):
+        """
+        A readiness timeout used to return 503 silently. During a loaded test
+        run the only evidence was the status code, with nothing in the logs to
+        say whether the database was down or merely slow.
+        """
+        import asyncio
+
+        import routes.health as health
+
+        async def slow_select(*args, **kwargs):
+            await asyncio.sleep(0.5)
+            return [{"code": "A00"}]
+
+        # Record log calls directly. The module's log handler was bound to the
+        # output stream that existed when it was imported, so stdout capture
+        # fixtures cannot see what it writes.
+        events = []
+
+        class _RecordingLog:
+            def warning(self, event, **fields):
+                events.append(event)
+
+            def error(self, event, **fields):
+                events.append(event)
+
+        monkeypatch.setattr(health, "select", slow_select)
+        monkeypatch.setattr(health, "_DB_CHECK_TIMEOUT_S", 0.05)
+        monkeypatch.setattr(health, "log", _RecordingLog())
+
+        res = anon_client.get("/health")
+        assert res.status_code == 503
+        assert "did not respond" in res.json()["checks"]["database"]["detail"]
+        assert "health_database_check_timeout" in events

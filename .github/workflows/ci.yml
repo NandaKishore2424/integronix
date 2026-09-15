@@ -141,7 +141,7 @@ jobs:
             -e GROQ_API_KEY=placeholder \
             integronix-backend:ci
 
-          for i in $(seq 1 30); do
+          for i in $(seq 1 120); do
             if curl -fsS http://localhost:8000/health/live >/dev/null 2>&1; then
               echo "liveness OK after ${i}s"; break
             fi
@@ -155,6 +155,13 @@ jobs:
           code=$(curl -s -o /tmp/ready.json -w '%{http_code}' http://localhost:8000/health)
           cat /tmp/ready.json; echo
           test "$code" = "503" || { echo "expected 503, got $code"; exit 1; }
+
+          # The image runs with HF_HUB_OFFLINE=1. Loading the model by hub name
+          # failed there once, which would have broken vector search on every
+          # deploy while all the other checks stayed green.
+          echo "--- embedding model loads offline from the copy baked into the image ---"
+          grep -q '"embedding_model":{"ok":true}' /tmp/ready.json \
+            || { echo "embedding model failed to load inside the image"; docker logs smoke | tail -30; exit 1; }
 
           echo "--- correlation id header ---"
           curl -s -o /dev/null -D - http://localhost:8000/health/live | grep -i x-request-id

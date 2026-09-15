@@ -167,3 +167,23 @@ class TestPayerOwnership:
             f"payers with no owning organization: {orphans} — claims routed to "
             "them are invisible to every payer user. Run seeds/005."
         )
+
+
+class TestUserProvisioningSchema:
+    """Database facts POST /api/v1/admin/users depends on."""
+
+    def test_users_auth_id_references_auth_users(self, db):
+        assert _fk_target(db, "users", "auth_id") == "auth.users"
+
+    def test_every_role_the_admin_api_can_assign_is_permitted(self, db):
+        from routes.admin import HOSPITAL_ROLES, PAYER_ROLES
+
+        definition = _check_constraint(db, "users", "users_role_check")
+        assert definition, "users_role_check constraint is missing"
+        for role in sorted(HOSPITAL_ROLES | PAYER_ROLES):
+            assert f"'{role}'" in definition, (
+                f"the admin API can assign {role!r}, which the constraint rejects"
+            )
+
+    def test_branches_belong_to_an_organisation(self, db):
+        assert _fk_target(db, "branches", "organization_id") == "public.organizations"

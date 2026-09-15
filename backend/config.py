@@ -76,6 +76,18 @@ class Settings(BaseSettings):
     rate_limit_pipeline_per_minute: int = 20
     rate_limit_pipeline_burst: int = 10
 
+    # ── Embedding model / startup ─────────────────────────────────────────────
+    # Where to load the sentence-embedding model from. Empty means: the copy
+    # baked into the Docker image when present, otherwise the Hugging Face hub
+    # name (local development). The image sets it explicitly.
+    embedding_model_path: str = ""
+
+    # Load the embedding model, compile the pipeline graph and prime pgvector
+    # before the server accepts traffic, so the first request is not the slow
+    # one. Tests construct the app without running the lifespan, so it is inert
+    # there.
+    warm_up_on_startup: bool = True
+
     # ── App ───────────────────────────────────────────────────────────────────
     app_env: str = "development"
     app_host: str = "0.0.0.0"

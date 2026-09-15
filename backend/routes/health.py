@@ -5,7 +5,8 @@ The distinction matters to whatever is supervising the process:
 
   /health/live   Is this process running and able to answer? Never touches a
                  dependency. A failing liveness check means RESTART ME.
-  /health        Is this instance ready to serve traffic? Checks the database.
+  /health        Is this instance ready to serve traffic? Checks the database
+                 and, after startup warm-up, the embedding model.
                  A failing readiness check means STOP SENDING ME REQUESTS —
                  restarting would not help, because the fault is downstream.
 
@@ -25,6 +26,7 @@ from fastapi import APIRouter, Response, status
 from config import settings
 from database import select
 from logger import get_logger
+from services.embedding_model import warm_up_status
 
 router = APIRouter(tags=["Health"])
 log = get_logger(__name__)
@@ -58,6 +60,7 @@ async def readiness(response: Response):
         )
         database_ok = True
     except asyncio.TimeoutError:
+        log.warning("health_database_check_timeout", timeout_s=_DB_CHECK_TIMEOUT_S)
         detail = f"database did not respond within {_DB_CHECK_TIMEOUT_S}s"
     except Exception as exc:
         # The exception text can carry connection strings; log it, and keep
@@ -65,18 +68,30 @@ async def readiness(response: Response):
         log.error("health_database_check_failed", error=str(exc))
         detail = "database unreachable"
 
+    # The embedding model is loaded by the startup warm-up. An instance whose
+    # model failed to load cannot run the pipeline, so it is not ready even
+    # with a healthy database. When warm-up never ran in this process (tests,
+    # or warm-up disabled) the check is omitted rather than reported failed.
+    model = warm_up_status()
+    model_ok = True if model is None else bool(model.get("ok"))
+    ready = database_ok and model_ok
+
+    checks: dict = {"database": {"ok": database_ok}}
+    if detail:
+        checks["database"]["detail"] = detail
+    if model is not None:
+        checks["embedding_model"] = {"ok": model_ok}
+
     body = {
-        "status": "ready" if database_ok else "not_ready",
+        "status": "ready" if ready else "not_ready",
         "database": "connected" if database_ok else "error",
         "version": app_version(),
         "env": settings.app_env,
-        "checks": {"database": {"ok": database_ok}},
+        "checks": checks,
         "duration_ms": int((time.perf_counter() - started) * 1000),
     }
-    if detail:
-        body["checks"]["database"]["detail"] = detail
 
-    if not database_ok:
+    if not ready:
         # The part that matters: an unready instance must SAY so in the status
         # code, or nothing upstream can act on it.
         response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
