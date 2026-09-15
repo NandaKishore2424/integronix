@@ -2,8 +2,7 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import Link from 'next/link';
-import { BarChart3, Mail, Lock, ArrowRight, Zap, Eye, EyeOff } from 'lucide-react';
+import { BarChart3, Mail, Lock, ArrowRight, Eye, EyeOff } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 
 export default function LoginPage() {
@@ -33,45 +32,6 @@ export default function LoginPage() {
 
                 if (orgType === 'insurance_payer') {
                     // Any role inside a payer org → payer portal
-                    router.push('/payer/inbox');
-                } else if (role === 'rcm') {
-                    router.push('/hospital/rcm/inbox');
-                } else {
-                    router.push('/hospital/coder/analyze');
-                }
-            }
-        } finally {
-            setLoading(false);
-        }
-    }
-
-    async function handleDemoAccess() {
-        setLoading(true); setError('');
-        const demoEmail = process.env.NEXT_PUBLIC_DEMO_EMAIL ?? '';
-        const demoPassword = process.env.NEXT_PUBLIC_DEMO_PASSWORD ?? '';
-        if (!demoEmail || !demoPassword) {
-            setError('Demo credentials not configured. Check NEXT_PUBLIC_DEMO_EMAIL and NEXT_PUBLIC_DEMO_PASSWORD in .env.local.');
-            setLoading(false);
-            return;
-        }
-        try {
-            const { data, error: err } = await supabase.auth.signInWithPassword({
-                email: demoEmail,
-                password: demoPassword,
-            });
-            if (err) { setError('Demo account not configured. Please sign up first.'); return; }
-
-            if (data.user) {
-                const { data: userData } = await supabase
-                    .from('users')
-                    .select('role, organizations(type)')
-                    .eq('auth_id', data.user.id)
-                    .single();
-
-                const orgType = (userData?.organizations as { type?: string } | null)?.type;
-                const role = userData?.role;
-
-                if (orgType === 'insurance_payer') {
                     router.push('/payer/inbox');
                 } else if (role === 'rcm') {
                     router.push('/hospital/rcm/inbox');
@@ -160,28 +120,6 @@ export default function LoginPage() {
                             {loading ? <span className="animate-spin w-4 h-4 border-2 border-white/30 border-t-white rounded-full" /> : <><ArrowRight className="w-4 h-4" /> Sign In</>}
                         </button>
                     </form>
-
-                    <div className="flex items-center gap-3 my-5">
-                        <div className="flex-1 h-px bg-white/[0.07]" />
-                        <span className="text-xs text-slate-600">or</span>
-                        <div className="flex-1 h-px bg-white/[0.07]" />
-                    </div>
-
-                    {/* Demo access button — for presentation */}
-                    <button
-                        onClick={handleDemoAccess} disabled={loading}
-                        className="w-full py-3 rounded-xl border border-amber-500/30 bg-amber-500/10 text-amber-300 text-sm font-semibold flex items-center justify-center gap-2 hover:bg-amber-500/15 transition-colors"
-                    >
-                        <Zap className="w-4 h-4" />
-                        Demo Access — Quick Preview
-                    </button>
-
-                    <p className="text-center text-sm text-slate-500 mt-8">
-                        Don&apos;t have an account?{' '}
-                        <Link href="/auth/signup" className="text-amber-400 hover:text-amber-300 font-medium">
-                            Register your organisation
-                        </Link>
-                    </p>
                 </div>
             </div>
         </div>

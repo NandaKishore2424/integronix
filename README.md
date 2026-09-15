@@ -2,292 +2,243 @@
 
 [![CI](https://github.com/NandaKishore2424/integronix/actions/workflows/ci.yml/badge.svg)](https://github.com/NandaKishore2424/integronix/actions/workflows/ci.yml)
 
-A clinical coding and revenue-integrity engine. Feed it a discharge summary —
-typed or a scanned PDF — and it independently derives the ICD-10 and CPT codes,
-compares them against whatever a human coder billed, and quantifies where the
-money and the compliance risk are.
+**A clinical coding and revenue-integrity engine.** Integronix reads a discharge summary — typed or a scanned PDF — derives ICD-10-CM and CPT codes through a bounded agentic pipeline, audits them against what a human coder billed, and carries the result through claim submission and payer adjudication.
 
-**Stack:** FastAPI · LangGraph · Groq · pgvector · Supabase (Postgres + RLS) ·
-Next.js 14 · Docker
+`Python 3.12` · `FastAPI` · `LangGraph` · `Groq` · `PostgreSQL` · `pgvector` · `Supabase` · `Next.js 14` · `TypeScript` · `Docker`
 
 ---
 
-## The problem
-
-Medical coding is the layer between "a doctor wrote something in a chart" and
-"the hospital gets paid". Someone has to read prose written for clinicians and
-turn it into billing codes.
-
-Get it wrong in one direction and the hospital undercharges — a documented
-complication is missed and the reimbursement tier drops. Get it wrong in the
-other and you have committed billing fraud under the False Claims Act. Human
-coders do this at volume, under time pressure, from notes that were never
-written with a coder in mind.
-
-Integronix produces a second, independent opinion: codes, the evidence behind
-each one, a confidence score, and a plain diff against the human's answer.
+- [At a glance](#at-a-glance)
+- [Architecture](#architecture)
+- [The agentic pipeline](#the-agentic-pipeline)
+- [Backend design](#backend-design)
+- [Retrieval and data engineering](#retrieval-and-data-engineering)
+- [Key decisions](#key-decisions)
+- [Quality](#quality)
+- [Operations](#operations)
+- [Running locally](#running-locally)
 
 ---
 
-## The design decision that matters
+## At a glance
 
-**The LLM never picks the billing code.**
+| | |
+|---|---|
+| **Problem** | Turning clinical prose into billing codes. Undercode and a hospital loses earned revenue; overcode and it is billing fraud. |
+| **AI** | A 10-node LangGraph workflow. The LLM is confined to one extraction step — every billing decision is deterministic and explainable. |
+| **Knowledge base** | 98,244 ICD-10-CM codes · 379,283 SNOMED CT concepts · 36,401 billable codes indexed as 384-dimensional vectors |
+| **Money path** | Adjudication as one Postgres transaction with an optimistic lock · exact `Decimal` arithmetic · an audit trail that cannot be skipped |
+| **Multi-tenancy** | Organisation resolved server-side from the verified token — never from the request — and checked on every query |
+| **Interoperability** | HL7 FHIR R4 `Claim` · ANSI X12 EDI 837P and 835 |
+| **Quality** | 236 tests · CI runs with zero secrets · schema-contract tests for what mocks cannot see |
+| **Operations** | Multi-stage Docker image · liveness/readiness split · request correlation IDs · per-user rate limiting |
 
-It runs in exactly one node, `clinical_extract`, where it turns prose into
-structured diagnoses and procedures — each anchored to the sentence it came
-from. Every step after that, including the code that determines what gets
-billed, is a deterministic scoring function:
+## Architecture
 
-```python
-score = (confidence  * 0.40      # how well the ontology matched
-       + specificity * 0.30      # earned, not free — see below
-       + consistency * 0.20      # do the code's words appear in the evidence?
-       + combination * 0.10      # ICD-10 prefers combination codes
-       + negation)               # penalty when the chart rules it out
+```mermaid
+flowchart LR
+    subgraph web["Next.js 14"]
+        hosp["Hospital portal<br/>coder · RCM · admin"]
+        payer["Payer portal<br/>adjudicator"]
+    end
+
+    subgraph api["FastAPI"]
+        routes["Routes<br/>auth · tenant checks · validation"]
+        pipeline["LangGraph pipeline<br/>10 nodes"]
+        svc["Services<br/>policy gate · EDI · FHIR"]
+        dal["database.py<br/>async data layer"]
+    end
+
+    subgraph supa["Supabase"]
+        pg[("PostgreSQL")]
+        vec[("pgvector")]
+        authsvc["Auth · JWT"]
+    end
+
+    llm["Groq LLM"]
+
+    hosp -->|HTTPS + JWT| routes
+    payer -->|HTTPS + JWT| routes
+    routes --> pipeline
+    routes --> svc
+    pipeline --> dal
+    svc --> dal
+    pipeline -->|extraction only| llm
+    dal --> pg
+    dal --> vec
+    routes -.->|verify token| authsvc
 ```
 
-The reasoning is boring and load-bearing: if a payer disputes a claim, *"the
-model was confident"* is not a defensible answer. *"Here is the rule that fired,
-and here is the sentence in the chart it fired on"* is.
+Two portals share one API. A **hospital** codes clinical notes and submits claims; a **payer** — a separate tenant — reviews and adjudicates them. Relational data, authentication and vector search live in the same Postgres instance, so a semantic match comes back with the code's clinical and billing metadata in a single query instead of a round trip between two stores.
+
+## The agentic pipeline
+
+```mermaid
+flowchart TD
+    note["Clinical note · text or PDF"] --> n1["1 · doc_processing"]
+    n1 --> n2["2 · clinical_extract"]
+    n2 --> n3["3 · cpt_resolve"]
+    n3 --> n4["4 · snomed_resolve"]
+    n4 --> n5["5 · snomed_icd_map"]
+    n5 --> q{"ICD candidates?"}
+    q -->|yes| n7["7 · icd_decision"]
+    q -->|no| n6["6 · icd_embedding"]
+    n6 --> n7
+    n7 --> n8["8 · audit_comparison"]
+    n8 --> n9["9 · risk_scoring"]
+    n9 --> n10["10 · financial_calc"]
+    n10 --> out["Codes · evidence · risk · revenue"]
+
+    classDef llm fill:#fef3c7,stroke:#d97706,color:#111827
+    classDef decision fill:#e0e7ff,stroke:#4f46e5,color:#111827
+    class n2 llm
+    class n7 decision
+```
+
+<sub>Amber is the only step that calls an LLM. Indigo is where the billed code is decided.</sub>
+
+| # | Node | Responsibility | Decided by |
+|---|---|---|---|
+| 1 | `doc_processing` | Extracts text with pdfplumber; falls back to Tesseract OCR for scanned pages | code |
+| 2 | `clinical_extract` | Prose → diagnoses and procedures, each carrying a verbatim evidence quote | **LLM** |
+| 3 | `cpt_resolve` | Procedures → CPT/HCPCS by vector similarity | code |
+| 4 | `snomed_resolve` | Diagnosis → SNOMED CT concept via WHO ICD-API (when configured), the suggested concept, or text match | code |
+| 5 | `snomed_icd_map` | SNOMED → ICD-10-CM crosswalk | code |
+| 6 | `icd_embedding` | Semantic search over pgvector — **runs only when no candidates exist yet** | code |
+| 7 | `icd_decision` | Scores every candidate and selects the code that gets billed | code |
+| 8 | `audit_comparison` | AI vs. human code → discrepancy type and DRG flag (`CC_MISSED`, `MCC_OVERCODED`, …) | code |
+| 9 | `risk_scoring` | Confidence, discrepancy, dollar impact and CC/MCC status → `LOW` / `MEDIUM` / `HIGH` | code |
+| 10 | `financial_calc` | Applies the organisation's pricing to produce the claim total | code |
+
+State moves through one typed `CodingState`; the graph is compiled once and reused across requests.
+
+### The LLM never picks the billing code
+
+The model runs in exactly one node — temperature 0, JSON-constrained output, input capped at 8,000 characters, with timeout and rate-limit handling — and its only job is structure: turn prose into diagnoses anchored to the sentences that support them. The code that is billed comes from a scoring function:
+
+```python
+score = (confidence  * 0.40    # strength of the ontology match
+       + specificity * 0.30    # earned from the documentation — see below
+       + consistency * 0.20    # the code's clinical terms appear in the evidence
+       + combination * 0.10    # ICD-10-CM prefers combination codes
+       + negation)             # penalty when the chart rules the condition out
+```
+
+When a payer disputes a claim, *"the model was confident"* is not an answer; *"this rule fired on this sentence"* is. Keeping the LLM out of the decision is what makes every code reproducible and auditable.
 
 ### Specificity has to be earned
 
-This is the part I would want a reviewer to look at.
+When vector search first came online, a routine pneumonia note resolved to **J84.117 — *desquamative interstitial pneumonia*** rather than **J18.9**. The cause was `specificity = len(code) * 0.15`: a longer code scored higher simply for being longer. That is algorithmic upcoding.
 
-When the vector search first came online, the golden pneumonia note resolved to
-**J84.117 — "Desquamative interstitial pneumonia"** instead of plain **J18.9**.
-Not because the model was confident about a rare interstitial lung disease, but
-because `_specificity_score` was `len(code) * 0.15`. A seven-character code
-outscored a five-character one for being longer.
-
-That is algorithmic upcoding — the precise failure this system exists to
-prevent. The fix implements the actual ICD-10-CM guideline: *code to the highest
-level of specificity supported by the documentation*.
+The fix encodes the ICD-10-CM guideline — *code to the highest specificity the documentation supports*. A candidate's specificity credit now scales with the share of its distinguishing clinical terms that actually appear in the chart, ignoring words like *unspecified* and *organism* that describe the code rather than the patient:
 
 ```python
-def _distinguishing_support(candidate, entities, raw_text) -> float:
-    """Fraction of the code's distinguishing clinical terms the chart supports."""
-    tokens = [w for w in _description_tokens(candidate["description"])
-              if w not in META_WORDS]        # "unspecified", "organism" describe
-    if not tokens:                           # the CODE, not the patient
-        return 1.0
-    hay = raw_text.lower() + " " + evidence_text_of(entities)
-    return sum(1 for w in tokens if w in hay) / len(tokens)
+specificity = base * (0.35 + 0.65 * distinguishing_support)
 ```
 
-`specificity = base * (0.35 + 0.65 * support)`. The chart never says
-"desquamative" or "interstitial", so J84.117 earns almost none of its length
-bonus and J18.9 wins. Feed it a note that *does* document the rare variant and
-the specific code wins instead — the rule is **prefer documented**, not
-**prefer general**. Both directions are pinned by tests.
+The chart never mentions *desquamative*, so J84.117 forfeits its length bonus and J18.9 wins. When a note does document the rare variant, the specific code wins instead. Tests pin both directions — the rule is *prefer documented*, not *prefer general*.
 
-### And the negation check
+### Negation
 
-```python
-NEGATION_PHRASES = ["no evidence of", "without complications", "ruled out", ...]
-```
+A candidate implying a complication the chart rules out ("no evidence of renal disease") takes a hard penalty. [`samples/03_negation_trap.txt`](samples/03_negation_trap.txt) is written almost entirely in negations and must resolve to **E11.9, without complications**; its sibling, which documents polyneuropathy, must resolve to **E11.42**.
 
-If a candidate implies a complication ("with diabetic chronic kidney disease")
-but the chart says "no evidence of renal disease", it takes a hard penalty.
-Without this, a keyword matcher happily bills a complication code off the very
-sentence that rules it out.
+### Failure is contained, not disguised
 
-There is a test note (`samples/03_negation_trap.txt`) built entirely from
-negations. It resolves to `E11.9` — *without complications* — as it must.
+Every node is wrapped in `@safe_node`. A failing node records where it failed, and **every downstream node is skipped**. Before this, one crash let the remaining nodes run on half-built state and the API returned `200` with a plausible-looking empty result — the worst failure mode a billing system can have. The claims API independently re-verifies, server-side, that a session completed and produced a usable code before it will accept a claim.
 
----
+## Backend design
 
-## Pipeline
+### Layering
 
 ```
-note (text or PDF)
-  → doc_processing      pdfplumber, Tesseract OCR fallback for scans
-  → clinical_extract    LLM: prose → structured diagnoses + procedures
-  → cpt_resolve         procedures → CPT/HCPCS via vector search
-  → snomed_resolve      diagnosis → SNOMED concept
-  → snomed_icd_map      SNOMED → ICD crosswalk (deterministic)
-       ├─ mapping found ─────────────┐
-       └─ no mapping → icd_embedding │   (pgvector; runs only when needed)
-                                      ▼
-                                icd_decision      ← the billing decision
-                                      ↓
-                                audit_comparison  AI vs. human code
-                                      ↓
-                                risk_scoring      confidence + $ delta
-                                      ↓
-                                financial_calc    org pricing → claim total
+routes/       HTTP only — authentication, tenant checks, request validation
+services/     domain logic with no HTTP knowledge — policy gate, EDI, FHIR
+agents/       pipeline nodes
+database.py   the single async data layer every read and write goes through
 ```
 
-`icd_embedding` loads a transformer and runs a vector query — the most
-expensive step in the graph — so the routing after `snomed_icd_map` is a
-conditional edge that skips it entirely when the crosswalk already answered.
+One data layer is what keeps the async model honest — a single pooled `httpx` client and no blocking calls on the event loop — and it gives the entire backend one seam for testing.
 
-Every node is wrapped in `@safe_node`, which does two things: records the
-failure into state instead of taking the request down, **and short-circuits
-every node after it.**
+### Authentication and tenant isolation
 
-That second half matters more than it sounds. Before it existed, one node
-crashing let four more run against half-built state, each failing on `None`,
-and the endpoint returned **HTTP 200 with a confident-looking empty result**.
-For a billing engine, silently converting a failure into a plausible success is
-the worst available outcome. A run that fails now cannot be submitted as a
-claim: the API verifies server-side that the session completed and produced a
-usable code before it will accept one.
+All 26 `/api/v1` endpoints require a verified Supabase JWT; only the two health probes are public. The caller's organisation is loaded from the database using the token's subject — **never taken from the request**. A client-supplied `organization_id` that disagrees is rejected with `403`, and `Principal.assert_org()` returns the caller's *own* organisation so routes never carry an unchecked value into a query.
 
----
+Row-Level Security policies exist on the tenant tables as a second layer. Migration `020` populates the JWT claim they depend on, and a feature flag switches the backend to forwarding user tokens so Postgres enforces them too. That rollout is staged deliberately: enabling enforcement before every session has been re-issued would lock users out of their own data.
 
-## Correctness in the money path
+### Adjudication is one transaction
 
-These are the parts I would defend line by line.
-
-**Adjudication is one transaction, not three.** It used to be fetch → check
-status in Python → update. Two concurrent approvals both passed the check and
-both won. PostgREST cannot hold a transaction across requests, so the invariant
-moved into Postgres ([`021_atomic_adjudication.sql`](migrations/schema/021_atomic_adjudication.sql)):
-the status check rides inside the `UPDATE`'s `WHERE` clause as an optimistic
-lock, and the HIPAA audit row commits in the same transaction or not at all.
+Adjudication used to be *fetch → check status in Python → update*, so two concurrent approvals could both pass the check and both pay. PostgREST cannot hold a transaction across requests, so the invariant moved into the database:
 
 ```sql
-UPDATE public.claims
+UPDATE claims
    SET status = p_new_status, adjudicated_at = now(), ...
- WHERE id = p_claim_id
-   AND status = p_expected_status;      -- the lock
+ WHERE id     = p_claim_id
+   AND status = p_expected_status;          -- optimistic lock
 
 IF NOT FOUND THEN
-    RETURN jsonb_build_object('ok', false, 'reason', 'status_conflict', ...);
+  RETURN jsonb_build_object('ok', false, 'reason', 'status_conflict');
 END IF;
 
-INSERT INTO public.claim_audit_logs (...);   -- same transaction
+INSERT INTO claim_audit_logs (...);         -- same transaction
 ```
 
-The loser of a race gets `409`, not a second payment. Verified by firing two
-concurrent approvals at one claim: exactly one `ok`, one `status_conflict`, one
-audit row.
+The losing request gets `409 Conflict` instead of a second payment, and the audit row commits with the status change or not at all. Verified by racing two approvals against one claim: one success, one conflict, one audit row.
 
-**Money is `Decimal`, never `float`.** `0.1 + 0.2 != 0.3` in binary floating
-point and the drift accumulates across line items until an EDI 835 fails to
-balance. Amounts are quantized to cents with `ROUND_HALF_UP`, built via
-`Decimal(str(x))` so a float's binary error is not imported along with it, and
-**patient responsibility is the remainder of allowed − paid**, never its own
-percentage — so the three amounts reconcile exactly, for every input.
+### Money is exact
 
-**The audit trail is not best-effort.** A claim with no audit row is not a
-representable state: if the audit write fails, the claim is deleted and the
-request errors, rather than leaving an untracked claim in a payer queue.
+Amounts are `Decimal`, quantised to cents with `ROUND_HALF_UP` and built from `Decimal(str(x))` so binary float error is never imported. Patient responsibility is **allowed − paid**, never a second percentage, so the three amounts always reconcile — a requirement for EDI 835 remittance. Request models bound every money field; before that, `payer_responsibility_pct = 5.0` paid five times the allowed amount.
 
-**Tenant isolation is enforced at the application boundary and in the
-database.** `Principal.organization_id` is read from the database using the
-verified JWT subject — never from the request. A client-supplied `organization_id`
-that disagrees is rejected, and `assert_org()` returns *the caller's own* org so
-routes use that value and never thread an unchecked one into a query.
+### Automated payer policy
 
----
+A pure, fail-closed policy gate decides whether a claim may be auto-approved: demographics present, ICD version accepted, mapping path trusted, confidence and risk within thresholds, and payer-defined rules such as spending caps, excluded procedure prefixes and age limits. Auto-approval is off unless a payer enables it, and any failing check routes the claim to manual review with the reason attached.
 
-## Vector search
+<details>
+<summary><b>Interoperability details</b></summary>
+<br/>
 
-Two things are embedded: SNOMED concepts and ICD codes, as 384-dimensional
-vectors (`all-MiniLM-L6-v2`), queried through pgvector.
+- **FHIR R4** — a proper HL7 `Claim` resource whose coding-system URI (ICD-11 MMS or `icd-10-cm`) follows the path that actually resolved the code.
+- **EDI 837P / 835** — raw ANSI X12 segments to the `005010X222A1` specification. Amounts always carry two decimals, provider names are stripped of delimiter characters, and a missing date of birth omits the segment rather than inventing a placeholder.
 
-The reason it exists is that doctors do not write in ICD terminology. A chart
-says "ticker gave out", not "cardiac arrest". Keyword search returns nothing;
-cosine similarity finds the right concept anyway. But it is deliberately the
-*fallback* — the crosswalk is deterministic and faster when it has an answer.
+</details>
 
-**Only the 36,401 billable leaf codes are embedded**, not all 98,244. The
-decision node discards non-billable candidates anyway, so embedding them would
-be paying storage for rows that can never win — and the vectors have to fit
-inside a 500 MB free-tier database.
+## Retrieval and data engineering
 
-The keyword search underneath has a relevance floor, and it is there for a
-specific reason. A pneumonia note was once billed as **S30.810, "Abrasion of
-lower back and pelvis"**: the note said "right *lower* lobe", the single token
-"lower" substring-matched "lower back", and every index hit scored a flat 0.8
-regardless of how little of the query it covered. Matches are now scored by
-query coverage against a floor, and returning nothing is an acceptable answer —
-the pipeline reports `UNKNOWN`, which it refuses to bill.
+**Vector search.** Billable ICD-10-CM codes and CPT/HCPCS procedures are embedded with `all-MiniLM-L6-v2` (384 dimensions) and queried through pgvector. Clinicians don't write in billing vocabulary, and cosine similarity bridges that gap where keyword search returns nothing. It is deliberately the *fallback*: the deterministic crosswalk answers first. Only the **36,401 billable** codes are indexed — non-billable codes can never be selected, so embedding them would spend storage on rows that can never win.
 
----
+**Keyword relevance floor.** Early on, a pneumonia note was billed as **S30.810 — *abrasion of lower back*** because "right *lower* lobe" matched "*lower* back" and every hit scored a flat 0.8. Matches are now scored by how much of the query they cover and must clear a floor. Returning nothing is an acceptable answer: the pipeline reports `UNKNOWN`, which cannot be billed.
 
-## Ingestion
+**Ingestion.** ICD-10-CM is parsed from the CDC/NCHS release files, with billability derived from the hierarchy itself — only leaf codes are billable. SNOMED CT is streamed from the RF2 release and inserted in batches of 50,000. The embedding backfill writes with `COPY` into a staging table followed by one join-`UPDATE` per batch: per-row updates cost minutes per thousand rows against a hosted database, the batch approach takes seconds.
 
-Neither ontology is a hardcoded lookup table; both are ETL pipelines against
-the real release formats.
+## Key decisions
 
-**ICD-10-CM** ([`scripts/run_icd_ingestion.py`](backend/scripts/run_icd_ingestion.py))
-parses the CDC/NCHS annual release — a fixed-width order file plus XML for
-hierarchy and index. The non-obvious decision: billable status is *not* taken
-from the source. It is computed as `leaf_codes = all_codes − parent_codes`,
-because only leaf codes are billable, which is how payer clearinghouses
-actually reject claims. One run loaded 98,186 codes and 46,881 hierarchy nodes,
-discarding 6,955 redirect-only entries.
+| Decision | Chose | Over | Because |
+|---|---|---|---|
+| Who selects the billed code | Deterministic scoring | LLM judgment | Reproducible, auditable, defensible in a payer dispute |
+| Orchestration | LangGraph state graph | A hand-written async chain | Explicit topology, typed shared state, first-class conditional routing. A linear chain would work today; the graph pays off as retries and branches grow. |
+| Vector store | pgvector in Postgres | A dedicated vector database | Similarity and relational metadata in one query; no second system to keep in sync |
+| Concurrent adjudication | Optimistic lock in a SQL function | An application-level check | PostgREST cannot span a transaction across requests |
+| Money | `Decimal` | `float` | Remittance files must reconcile to the cent |
+| Rate limiting | In-process token bucket | Redis | Exact for a single instance; Redis becomes necessary at the second instance |
+| Web framework | FastAPI, async | Flask or Django | An I/O-bound workload, and Pydantic bounds on every input |
 
-**SNOMED CT** ([`scripts/import_snomed_rf2.py`](backend/scripts/import_snomed_rf2.py))
-streams the RF2 release line by line — ~350K concepts, 1.5M relationships —
-because loading it into one dataframe simply stalls.
-
-The embedding backfill writes via `COPY` into a temp table plus one join-`UPDATE`
-per batch. Per-row updates cost a network round trip each (~4 minutes per 1,000
-rows against a hosted database); the same batch now lands in seconds.
-
----
-
-## Interoperability
-
-- **FHIR R4** — builds a proper HL7 `Claim` resource, choosing the coding-system
-  URI (ICD-11 MMS vs. `icd-10-cm`) from the path that actually resolved the
-  code, not an org-level default.
-- **EDI 837P / 835** — raw ANSI X12 segments written to the `005010X222A1`
-  spec, the format US payers legally require. Details that are easy to get
-  wrong and matter: money must be `541.00`, never `541`; provider names are
-  stripped of anything colliding with the `*` `~` `:` delimiters; and if a DOB
-  was not extracted, the segment is **omitted rather than filled with a
-  placeholder** — a fabricated DOB is worse than a missing one.
-
----
-
-## Testing
+## Quality
 
 ```bash
 cd backend
-pytest                 # 210 hermetic tests, no network, ~13s — what CI runs
-pytest -m integration  # + live Supabase and Groq
-pytest --cov           # with coverage
+pytest                  # hermetic suite, no network — what CI runs
+pytest -m integration   # live Supabase and Groq
 ```
 
-**236 tests in two tiers, and the split is enforced rather than documented.**
-`config.Settings` raises on missing credentials, so `conftest.py` substitutes
-placeholders before any app module imports; anything needing real I/O is marked
-`integration` and skips itself when credentials are absent.
+| Tier | Tests | Runs against |
+|---|---|---|
+| Hermetic | 210 | An in-memory fake of the data layer — no network, no credentials |
+| Integration | 26 | Live Supabase and Groq; skipped automatically without credentials |
 
-CI therefore runs with **no secrets configured at all** — a green build is
-evidence the unit tier is genuinely hermetic. When a "unit" test quietly starts
-reaching the network, CI goes red instead of the failure appearing on someone
-else's machine.
+**CI runs with no secrets configured,** so a green build is evidence the hermetic tier is genuinely hermetic: the moment a test reaches the network, CI fails. Route tests assert the *shape of the query* a route issued, not just its status code — a lock only exists if the status predicate is really in the `WHERE` clause.
 
-Because every data access goes through one async layer, a single seam
-substitutes the whole database, so route logic — tenant checks, fail-closed
-guards, optimistic locks, audit compensation — is tested in milliseconds. Those
-tests assert **the shape of the query the route issued**, not just the status
-code: an optimistic lock is only a lock if the status predicate is really in
-the `WHERE` clause, and a `200` cannot tell you that.
+**What mocks cannot check.** A fake database enforces no foreign keys and no `CHECK` constraints, and that gap produced a real bug: audit rows were written with a `public.users` id while the column references `auth.users`. The route logic was correct and every mocked test passed; Postgres rejected the first real submission. [`test_schema_contract.py`](backend/tests/test_schema_contract.py) now pins the schema facts the code relies on — foreign-key targets, permitted status values, and the columns and functions the code depends on.
 
-### What mocks cannot check
-
-A fake database enforces no foreign keys and no `CHECK` constraints, so route
-logic can be entirely correct and still wrong about the schema. That happened:
-claim submission wrote `changed_by_user_id = principal.user_id`, a perfectly
-valid UUID — but that column references `auth.users`, while `user_id` is a
-`public.users` row id. 209 green tests said nothing; Postgres rejected it on
-the first real submission.
-
-[`tests/test_schema_contract.py`](backend/tests/test_schema_contract.py) now
-asserts the database facts the code depends on: that FK's target, that every
-status string the code writes is permitted by the constraint, that migration
-021's functions exist, and that no payer is orphaned. Repointing that FK breaks
-a test instead of production.
-
-Coverage is 48% overall and deliberately uneven — highest where a mistake costs
-money:
+Coverage is concentrated where mistakes cost money:
 
 | Module | Coverage |
 |---|---|
@@ -297,103 +248,65 @@ money:
 | `services/payer_policy_gate.py` | 89% |
 | `services/edi_835_builder.py` | 86% |
 
-The remainder is offline ETL and pipeline nodes covered by the integration tier.
-
----
+CI also builds and smoke-tests the Docker image on every push: it must boot, answer liveness, report `503` readiness with no database behind it, and still return `401` on protected routes.
 
 ## Operations
 
-**Health checks are split, because the questions differ.** `/health/live`
-touches nothing downstream — failure means *restart me*. `/health` checks the
-database — failure means *stop routing to me*, and returns **503**, because
-load balancers read status codes, not response bodies.
+- **Liveness vs. readiness.** `/health/live` touches nothing downstream — failure means restart. `/health` checks the database and returns `503` when the instance cannot serve — failure means stop routing traffic to it. Conflating the two turns a database blip into a restart loop.
+- **Correlation IDs.** Middleware assigns every request an ID and carries it through a `ContextVar`, so each log line emitted while serving that request is tagged automatically. The ID is returned as `X-Request-ID` and quoted in error responses.
+- **Rate limiting.** The pipeline endpoints spend an LLM call per request, so they sit behind a per-user token bucket — keyed on the user rather than the IP, since a hospital network shares one address.
+- **Container.** Multi-stage build, CPU-only PyTorch wheel (the default bundles CUDA), embedding model baked in at build time, non-root user, and configuration injected at runtime so one image moves unchanged between environments.
 
-**Every request carries a correlation id**, propagated through a `ContextVar` so
-every log line during that request is tagged without any function forwarding it
-— a `ContextVar` rather than a global precisely because one event loop serves
-many requests concurrently. It is returned as `X-Request-ID` and quoted in
-error responses, so "my submission failed" becomes a `grep`.
+## Project structure
 
-**The pipeline endpoints are rate limited** with a per-user token bucket. A
-fixed window would allow the full quota on either side of a boundary; a bucket
-caps the sustained rate while permitting the burst a human clicking a button
-produces. Keyed on user rather than IP, since a hospital NAT shares one address.
-It is in-process, not Redis — with a single instance that is exact, and the
-trigger to move it is recorded in the module rather than left implicit.
+```
+backend/
+├── agents/         LangGraph nodes and graph wiring
+├── routes/         HTTP endpoints — code, claims, cases, analytics, icd, parse, payers, health
+├── services/       policy gate, EDI 837/835, FHIR, ontology providers
+├── scripts/        ICD / SNOMED / CPT ingestion and embedding backfill
+├── tests/          236 tests
+├── auth.py         JWT verification, Principal, role and tenant checks
+├── database.py     single async data layer
+├── middleware.py   request correlation
+└── Dockerfile
+frontend/           Next.js 14 (App Router) — hospital and payer portals
+migrations/         versioned schema and seed SQL
+samples/            synthetic clinical notes
+```
 
----
+## Running locally
 
-## Running it
-
-**Prerequisites:** Python 3.12, Node 20 + pnpm, a Supabase project, a Groq API key.
+Requires Python 3.12, Node 20 with pnpm, a Supabase project and a Groq API key.
 
 ```bash
-# Backend
+# backend
 cd backend
 python -m venv venv && venv/bin/pip install -r requirements.txt
-cp .env.example .env          # fill in Supabase + Groq
+cp .env.example .env              # Supabase and Groq credentials
 venv/bin/uvicorn main:app --reload --port 8000
 
-# Frontend
+# frontend
 cd frontend
 pnpm install
 cp .env.local.example .env.local
 pnpm dev
 ```
 
-Apply `migrations/schema/*.sql` in order, then `migrations/seeds/*.sql`. Run
-`scripts/run_icd_ingestion.py` and `scripts/generate_embeddings.py` to populate
-the ontologies.
+Apply `migrations/schema/*.sql` and then `migrations/seeds/*.sql` in order, and run the ingestion and embedding scripts in `backend/scripts/`. To run the API in a container: `cd backend && docker compose up --build`.
 
-**Containerised:**
+### Sample notes
 
-```bash
-cd backend && docker compose up --build
-```
-
-Multi-stage build — dependencies compile in a builder stage and only the
-finished virtualenv ships. The CPU torch wheel is selected explicitly (the
-default bundles CUDA at ~2.5 GB) and the embedding model is baked in at build
-time, so a container start does not depend on HuggingFace being reachable. Runs
-as a non-root user; configuration arrives at run time, so one image is promoted
-unchanged between environments.
-
----
-
-## Layout
-
-```
-backend/
-  agents/      10 LangGraph nodes + graph.py (CodingState, wiring)
-  routes/      code, claims, icd, parse, payers, cases, analytics, health
-  services/    EDI + FHIR builders, ontology ingestion, payer policy gate
-  scripts/     ICD/SNOMED ETL, embedding generation
-  tests/       236 tests — 210 hermetic, 26 integration
-frontend/      Next.js 14 App Router — hospital and payer portals
-migrations/    20 schema migrations + seeds
-samples/       synthetic notes for exercising the pipeline
-```
-
-32 endpoints. 31 require authentication; `/health` and `/health/live` are public
-by design.
-
----
-
-## Try it
-
-`samples/` holds three synthetic notes:
-
-| Note | Result | Why it is there |
+| File | Expected | Demonstrates |
 |---|---|---|
-| `01_pneumonia_simple` | `J18.9` + CPT 71045 | The happy path, with a billable procedure |
-| `02_diabetes_with_complication` | `E11.42` | Specificity the chart **does** document — the specific code correctly wins |
-| `03_negation_trap` | `E11.9` | Specificity the chart **rules out** — must refuse to upcode |
+| `01_pneumonia_simple` | `J18.9` + CPT `71045` | The full path, including a billable procedure |
+| `02_diabetes_with_complication` | `E11.42` | Documented specificity is rewarded |
+| `03_negation_trap` | `E11.9` | Specificity the chart rules out is refused |
 
-Run 2 and 3 back to back. Same disease; the only thing separating the specific
-code from the general one is what the documentation supports. One direction is
-lost revenue, the other is fraud.
+All sample notes are synthetic.
 
 ---
 
-Built by Nanda Kishore R, with Subashini S and Nathin R, for the Virtusa Jatayu
-Hackathon — and substantially rebuilt since.
+**Nanda Kishore R** · [LinkedIn](https://www.linkedin.com/in/nanda-kishore-7290551b8/)
+
+Integronix began as a Virtusa Jatayu Hackathon project with Subashini S and Nathin R, and has since been substantially re-engineered — authentication and tenant isolation, the transactional money path, the scoring corrections, the test suite, CI and containerisation.
