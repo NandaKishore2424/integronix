@@ -7,6 +7,7 @@ import { runCodingPipeline, runPdfPipeline, ApiError } from '@/lib/api';
 import { useAuth } from '@/components/AuthProvider';
 import CodeInputPanel from '@/components/CodeInputPanel';
 import ResultsPanel from '@/components/ResultsPanel';
+import ApiStatusPill from '@/components/ApiStatusPill';
 
 type Tab = 'analyze' | 'results';
 
@@ -90,17 +91,14 @@ export default function AnalyzePage() {
                     <ChevronRight className="w-3 h-3" />
                     <span className="text-slate-300">New Case</span>
                 </div>
-                <div className="ml-auto flex items-center gap-1.5 text-xs text-emerald-400 font-medium">
-                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                    System Online
-                </div>
+                <ApiStatusPill />
             </div>
 
             {/* Hero strip */}
             <div className="px-6 pt-8 pb-6 border-b border-white/[0.06]">
                 <div className="max-w-7xl mx-auto">
                     <div className="flex flex-wrap gap-2 mb-4">
-                        {['🛡 HIPAA Ready', '⚡ Real-Time Analysis', '📋 ICD-10-CM 2024', '🔗 FHIR R4'].map(p => (
+                        {['📋 ICD-10-CM', '🧬 SNOMED CT', '🔗 FHIR R4', '🧾 EDI 837 / 835'].map(p => (
                             <span key={p} className="text-xs font-semibold text-slate-400 border border-white/[0.08] rounded-full px-3 py-1 bg-white/[0.03]">{p}</span>
                         ))}
                     </div>
@@ -111,13 +109,13 @@ export default function AnalyzePage() {
                         </span>
                     </h1>
                     <p className="text-slate-400 text-sm max-w-xl">
-                        Paste clinical documentation or upload a discharge summary PDF. The AI pipeline will recommend ICD-10-CM codes, flag discrepancies, and quantify revenue impact in under 2 seconds.
+                        Paste clinical documentation or upload a discharge summary PDF. The AI pipeline will recommend ICD-10-CM codes, flag discrepancies, and quantify revenue impact — with the evidence behind every code.
                     </p>
                     <div className="flex flex-wrap gap-5 mt-5">
                         {[
-                            { icon: Activity, value: '99.2%', label: 'Coding Accuracy' },
-                            { icon: Shield, value: 'HIPAA', label: 'Compliant' },
-                            { icon: BarChart3, value: '71+', label: 'ICD-10 Codes' },
+                            { icon: BarChart3, value: '98,244', label: 'ICD-10-CM codes' },
+                            { icon: Activity, value: '10-stage', label: 'pipeline' },
+                            { icon: Shield, value: 'Deterministic', label: 'code selection' },
                         ].map(s => (
                             <div key={s.label} className="flex items-center gap-2">
                                 <s.icon className="w-4 h-4 text-amber-400" />

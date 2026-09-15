@@ -58,7 +58,7 @@ export default function LoginPage() {
                     <h2 className="text-3xl font-extrabold text-white mb-4">Revenue Integrity Platform</h2>
                     <p className="text-slate-400 leading-relaxed mb-10">AI-powered ICD-10-CM coding audit. Catch revenue leakage before it reaches the payer.</p>
                     <div className="space-y-3">
-                        {['Multi-tenant hospital architecture', 'Sub-2 second AI analysis', 'Full FHIR R4 interoperability', 'Real-time revenue impact'].map(f => (
+                        {['Hospital and payer portals, isolated per organisation', 'Evidence-backed, deterministic code selection', 'FHIR R4 and EDI 837 / 835 export', 'Transactional claim adjudication'].map(f => (
                             <div key={f} className="flex items-center gap-3 text-sm text-slate-300">
                                 <div className="w-1.5 h-1.5 rounded-full bg-amber-400 shrink-0" />
                                 {f}
@@ -75,7 +75,7 @@ export default function LoginPage() {
                         <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-amber-500 to-orange-600 flex items-center justify-center">
                             <BarChart3 className="w-4 h-4 text-white" />
                         </div>
-                        <span className="font-bold text-white">CodePerfect Auditor</span>
+                        <span className="font-bold text-white">Integronix</span>
                     </div>
 
                     <h1 className="text-2xl font-extrabold text-white mb-1">Welcome back</h1>

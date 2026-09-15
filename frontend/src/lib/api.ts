@@ -1,6 +1,7 @@
 // lib/api.ts — Typed API client for Integronix backend
 
 import { supabase } from '@/lib/supabase';
+import type { UserRole } from '@/lib/supabase';
 import { CodeResponse, PipelineRequest } from '@/types/coding';
 import { CaseListResponse, CaseStatsResponse, CasesFilters } from '@/types/cases';
 import type { CodeResponse as FullCase } from '@/types/coding';
@@ -389,4 +390,69 @@ export async function updatePayerSettings(
         throw new ApiError(res.status, err.detail ?? `HTTP ${res.status}`);
     }
     return res.json() as Promise<PayerSettings>;
+}
+
+
+// ── Health ──────────────────────────────────────────────────────────────────
+
+export type ApiHealth = 'online' | 'degraded' | 'offline';
+
+/** GET /health — the public readiness probe, used by the live status indicator. */
+export async function fetchApiHealth(): Promise<ApiHealth> {
+    try {
+        const res = await fetch(`${API_BASE}/health`, { cache: 'no-store' });
+        return res.ok ? 'online' : 'degraded';
+    } catch {
+        return 'offline';
+    }
+}
+
+// ── Administration ──────────────────────────────────────────────────────────
+
+export interface CreateOrgUserPayload {
+    email: string;
+    full_name: string;
+    password: string;
+    role: UserRole;
+    branch_id?: string | null;
+}
+
+export interface CreatedOrgUser {
+    id: string;
+    email: string;
+    full_name: string;
+    role: UserRole;
+    branch_id: string | null;
+}
+
+/** FastAPI validation errors arrive as a list; surface their messages. */
+function detailMessage(detail: unknown, fallback: string): string {
+    if (typeof detail === 'string') return detail;
+    if (Array.isArray(detail)) {
+        const messages = detail
+            .map((d) => (d && typeof d === 'object' && 'msg' in d ? String((d as { msg: unknown }).msg) : ''))
+            .filter(Boolean);
+        if (messages.length) return messages.join('; ');
+    }
+    return fallback;
+}
+
+/**
+ * POST /api/v1/admin/users — create an account in the caller's organisation.
+ *
+ * Runs on the server with the service-role key, because public signup is
+ * disabled in Supabase. The organisation is taken from the caller's token, so
+ * it is deliberately absent from the payload — the API rejects it if sent.
+ */
+export async function createOrgUser(payload: CreateOrgUserPayload): Promise<CreatedOrgUser> {
+    const res = await apiFetch(`${API_BASE}/api/v1/admin/users`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+    });
+    if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new ApiError(res.status, detailMessage(err.detail, `Could not create user (HTTP ${res.status})`));
+    }
+    return res.json();
 }

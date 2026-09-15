@@ -3,6 +3,11 @@ import { NextResponse, type NextRequest } from 'next/server';
 
 export async function middleware(request: NextRequest) {
     const { pathname } = request.nextUrl;
+
+    // The public case-study page needs no session. Returning before any
+    // Supabase call keeps it fast and independent of the auth service, so the
+    // link works even while the database or API is switched off.
+    if (pathname === '/') return NextResponse.next();
     const response = NextResponse.next({ request });
 
     // Create a Supabase server client that reads/writes cookies correctly

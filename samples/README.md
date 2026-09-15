@@ -14,9 +14,9 @@ thing separating a more-specific code from a less-specific one is what the
 documentation actually supports. Getting that backwards in one direction is
 lost revenue; in the other it is billing fraud.
 
-Notes 2 and 3 have no billable procedure, so the estimated revenue is 0 —
-their ICD rows carry a `base_reimbursement` of 0 in the seed data. Use note 1
-to demonstrate the financial path.
+Notes 2 and 3 have no billable procedure, so any estimated revenue comes from
+the ICD code's seeded base reimbursement — E11.9 has one, E11.42 does not.
+Use note 1 to demonstrate a priced CPT line.
 
 ## Rate limits
 

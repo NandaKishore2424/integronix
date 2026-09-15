@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { Plus, Users, Loader2, X, User, Mail, Lock, Eye, EyeOff } from 'lucide-react';
 import { supabase, OrgUser, UserRole } from '@/lib/supabase';
 import { useAuth } from '@/components/AuthProvider';
+import { createOrgUser } from '@/lib/api';
 
 export default function PayerUsersPage() {
     const { orgUser } = useAuth();
@@ -38,22 +39,15 @@ export default function PayerUsersPage() {
         if (form.password.length < 8) { setError('Password must be at least 8 characters.'); return; }
         setSaving(true); setError('');
         try {
-            // Create auth user via Supabase Auth
-            const { data: authData, error: authErr } = await supabase.auth.signUp({
-                email: form.email,
-                password: form.password,
-                options: { data: { full_name: form.full_name } }
-            });
-            if (authErr || !authData.user) throw new Error(authErr?.message ?? 'Auth signup failed');
-
-            const { error: userErr } = await supabase.from('users').insert({
-                auth_id: authData.user.id,
-                organization_id: orgUser.organization_id,
+            // Provisioned on the server with the service-role key: public signup
+            // is disabled in Supabase, and the organisation comes from the
+            // caller's token rather than from this form.
+            await createOrgUser({
                 email: form.email,
                 full_name: form.full_name,
+                password: form.password,
                 role: form.role,
             });
-            if (userErr) throw new Error(userErr.message);
 
             setForm({ full_name: '', email: '', password: '', role: 'payer' });
             setShowModal(false);

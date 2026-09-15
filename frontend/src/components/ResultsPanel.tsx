@@ -246,8 +246,8 @@ export default function ResultsPanel({ result, onReanalyze, orgId }: Props) {
             <div className="glass-card px-6 py-4 flex flex-wrap gap-6 items-center">
                 <ShieldCheck className="w-4 h-4 text-slate-600" />
                 <div className="flex flex-col gap-0.5">
-                    <span className="mono-label">Analysis Engine</span>
-                    <span className="text-xs font-mono text-slate-300">Clinical Intelligence v2</span>
+                    <span className="mono-label">Pipeline</span>
+                    <span className="text-xs font-mono text-slate-300">LangGraph · 10 stages</span>
                 </div>
                 <div className="flex flex-col gap-0.5">
                     <span className="mono-label">Code Standard</span>
@@ -257,10 +257,10 @@ export default function ResultsPanel({ result, onReanalyze, orgId }: Props) {
                 </div>
                 <div className="flex flex-col gap-0.5">
                     <span className="mono-label">Ontology Version</span>
-                    <span className="text-xs font-mono text-slate-300">SNOMED-CT 2024</span>
+                    <span className="text-xs font-mono text-slate-300">SNOMED CT · Mar 2026</span>
                 </div>
                 <div className="flex flex-col gap-0.5">
-                    <span className="mono-label">Validation Pass</span>
+                    <span className="mono-label">Extraction attempt</span>
                     <span className="text-xs font-mono text-slate-300">
                         #{result.extraction_metadata?.attempt ?? 1}
                     </span>

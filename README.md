@@ -30,8 +30,8 @@
 | **Money path** | Adjudication as one Postgres transaction with an optimistic lock · exact `Decimal` arithmetic · an audit trail that cannot be skipped |
 | **Multi-tenancy** | Organisation resolved server-side from the verified token — never from the request — and checked on every query |
 | **Interoperability** | HL7 FHIR R4 `Claim` · ANSI X12 EDI 837P and 835 |
-| **Quality** | 236 tests · CI runs with zero secrets · schema-contract tests for what mocks cannot see |
-| **Operations** | Multi-stage Docker image · liveness/readiness split · request correlation IDs · per-user rate limiting |
+| **Quality** | 285 tests · CI runs with zero secrets · schema-contract tests for what mocks cannot see |
+| **Operations** | Multi-stage Docker image · startup warm-up · liveness/readiness split · request correlation IDs · per-user rate limiting |
 
 ## Architecture
 
@@ -85,8 +85,8 @@ flowchart TD
     q -->|no| n6["6 · icd_embedding"]
     n6 --> n7
     n7 --> n8["8 · audit_comparison"]
-    n8 --> n9["9 · risk_scoring"]
-    n9 --> n10["10 · financial_calc"]
+    n8 --> n9["9 · financial_calc"]
+    n9 --> n10["10 · risk_scoring"]
     n10 --> out["Codes · evidence · risk · revenue"]
 
     classDef llm fill:#fef3c7,stroke:#d97706,color:#111827
@@ -101,16 +101,16 @@ flowchart TD
 |---|---|---|---|
 | 1 | `doc_processing` | Extracts text with pdfplumber; falls back to Tesseract OCR for scanned pages | code |
 | 2 | `clinical_extract` | Prose → diagnoses and procedures, each carrying a verbatim evidence quote | **LLM** |
-| 3 | `cpt_resolve` | Procedures → CPT/HCPCS by vector similarity | code |
+| 3 | `cpt_resolve` | Procedures → CPT/HCPCS by vector similarity, against a 23-code demo catalogue | code |
 | 4 | `snomed_resolve` | Diagnosis → SNOMED CT concept via WHO ICD-API (when configured), the suggested concept, or text match | code |
 | 5 | `snomed_icd_map` | SNOMED → ICD-10-CM crosswalk | code |
 | 6 | `icd_embedding` | Semantic search over pgvector — **runs only when no candidates exist yet** | code |
 | 7 | `icd_decision` | Scores every candidate and selects the code that gets billed | code |
 | 8 | `audit_comparison` | AI vs. human code → discrepancy type and DRG flag (`CC_MISSED`, `MCC_OVERCODED`, …) | code |
-| 9 | `risk_scoring` | Confidence, discrepancy, dollar impact and CC/MCC status → `LOW` / `MEDIUM` / `HIGH` | code |
-| 10 | `financial_calc` | Applies the organisation's pricing to produce the claim total | code |
+| 9 | `financial_calc` | Applies the organisation's pricing to produce the claim total | code |
+| 10 | `risk_scoring` | Confidence, discrepancy, dollar impact and CC/MCC status → `LOW` / `MEDIUM` / `HIGH`; then saves the case, result and audit record | code |
 
-State moves through one typed `CodingState`; the graph is compiled once and reused across requests.
+State moves through one typed `CodingState`; the graph is compiled once and reused across requests. Pricing runs before the saving step deliberately — in the reverse order, every stored result was missing its financial summary.
 
 ### The LLM never picks the billing code
 
@@ -161,9 +161,11 @@ One data layer is what keeps the async model honest — a single pooled `httpx` 
 
 ### Authentication and tenant isolation
 
-All 26 `/api/v1` endpoints require a verified Supabase JWT; only the two health probes are public. The caller's organisation is loaded from the database using the token's subject — **never taken from the request**. A client-supplied `organization_id` that disagrees is rejected with `403`, and `Principal.assert_org()` returns the caller's *own* organisation so routes never carry an unchecked value into a query.
+All 27 `/api/v1` endpoints require a verified Supabase JWT; only the two health probes are public. The caller's organisation is loaded from the database using the token's subject — **never taken from the request**. A client-supplied `organization_id` that disagrees is rejected with `403`, and `Principal.assert_org()` returns the caller's *own* organisation so routes never carry an unchecked value into a query.
 
 Row-Level Security policies exist on the tenant tables as a second layer. Migration `020` populates the JWT claim they depend on, and a feature flag switches the backend to forwarding user tokens so Postgres enforces them too. That rollout is staged deliberately: enabling enforcement before every session has been re-issued would lock users out of their own data.
+
+**Accounts are provisioned server-side.** Public signup is disabled in Supabase — removing a signup page alone changes nothing, because the anon key ships in the browser bundle. Admins create users through `POST /api/v1/admin/users`, which calls the Auth admin API with the service-role key, takes the organisation from the caller's token, rejects roles that don't fit the organisation type, and deletes the Auth account again if the application profile cannot be written.
 
 ### Adjudication is one transaction
 
@@ -203,7 +205,7 @@ A pure, fail-closed policy gate decides whether a claim may be auto-approved: de
 
 ## Retrieval and data engineering
 
-**Vector search.** Billable ICD-10-CM codes and CPT/HCPCS procedures are embedded with `all-MiniLM-L6-v2` (384 dimensions) and queried through pgvector. Clinicians don't write in billing vocabulary, and cosine similarity bridges that gap where keyword search returns nothing. It is deliberately the *fallback*: the deterministic crosswalk answers first. Only the **36,401 billable** codes are indexed — non-billable codes can never be selected, so embedding them would spend storage on rows that can never win.
+**Vector search.** ICD-10-CM codes — every one of the **36,401 billable** codes — and a 23-code CPT/HCPCS demo catalogue (CPT itself is licensed by the AMA) are embedded with `all-MiniLM-L6-v2` (384 dimensions) and queried through pgvector. Clinicians don't write in billing vocabulary, and cosine similarity bridges that gap where keyword search returns nothing. It is deliberately the *fallback*: the deterministic crosswalk answers first. The embedding backfill targets billable codes, because non-billable codes can never be selected and vectors for them would spend storage on rows that can never win.
 
 **Keyword relevance floor.** Early on, a pneumonia note was billed as **S30.810 — *abrasion of lower back*** because "right *lower* lobe" matched "*lower* back" and every hit scored a flat 0.8. Matches are now scored by how much of the query they cover and must clear a floor. Returning nothing is an acceptable answer: the pipeline reports `UNKNOWN`, which cannot be billed.
 
@@ -219,6 +221,7 @@ A pure, fail-closed policy gate decides whether a claim may be auto-approved: de
 | Concurrent adjudication | Optimistic lock in a SQL function | An application-level check | PostgREST cannot span a transaction across requests |
 | Money | `Decimal` | `float` | Remittance files must reconcile to the cent |
 | Rate limiting | In-process token bucket | Redis | Exact for a single instance; Redis becomes necessary at the second instance |
+| Cold start | Warm-up in the app lifespan | Loading on first request | No user pays for model load, graph compile or cold vector indexes |
 | Web framework | FastAPI, async | Flask or Django | An I/O-bound workload, and Pydantic bounds on every input |
 
 ## Quality
@@ -231,8 +234,8 @@ pytest -m integration   # live Supabase and Groq
 
 | Tier | Tests | Runs against |
 |---|---|---|
-| Hermetic | 210 | An in-memory fake of the data layer — no network, no credentials |
-| Integration | 26 | Live Supabase and Groq; skipped automatically without credentials |
+| Hermetic | 256 | An in-memory fake of the data layer — no network, no credentials |
+| Integration | 29 | Live Supabase and Groq; skipped automatically without credentials |
 
 **CI runs with no secrets configured,** so a green build is evidence the hermetic tier is genuinely hermetic: the moment a test reaches the network, CI fails. Route tests assert the *shape of the query* a route issued, not just its status code — a lock only exists if the status predicate is really in the `WHERE` clause.
 
@@ -248,24 +251,25 @@ Coverage is concentrated where mistakes cost money:
 | `services/payer_policy_gate.py` | 89% |
 | `services/edi_835_builder.py` | 86% |
 
-CI also builds and smoke-tests the Docker image on every push: it must boot, answer liveness, report `503` readiness with no database behind it, and still return `401` on protected routes.
+CI also builds and smoke-tests the Docker image on every push: it must boot, answer liveness, report `503` readiness with no database behind it, load its embedding model from the baked copy, and still return `401` on protected routes.
 
 ## Operations
 
+- **Startup warm-up.** The first request after a restart took ~55 s — importing torch, compiling the graph, loading the embedding model and waiting for Postgres to page pgvector indexes back into memory. That work now happens in the FastAPI lifespan before the server accepts traffic, and readiness reports the instance unready if the model failed to load.
 - **Liveness vs. readiness.** `/health/live` touches nothing downstream — failure means restart. `/health` checks the database and returns `503` when the instance cannot serve — failure means stop routing traffic to it. Conflating the two turns a database blip into a restart loop.
 - **Correlation IDs.** Middleware assigns every request an ID and carries it through a `ContextVar`, so each log line emitted while serving that request is tagged automatically. The ID is returned as `X-Request-ID` and quoted in error responses.
 - **Rate limiting.** The pipeline endpoints spend an LLM call per request, so they sit behind a per-user token bucket — keyed on the user rather than the IP, since a hospital network shares one address.
-- **Container.** Multi-stage build, CPU-only PyTorch wheel (the default bundles CUDA), embedding model baked in at build time, non-root user, and configuration injected at runtime so one image moves unchanged between environments.
+- **Container.** Multi-stage build, CPU-only PyTorch wheel (the default bundles CUDA), non-root user, and configuration injected at runtime so one image moves unchanged between environments. The embedding model is baked in and loaded **by path**: loading it by hub name inside the image fails offline, which would have broken vector search on every deploy.
 
 ## Project structure
 
 ```
 backend/
 ├── agents/         LangGraph nodes and graph wiring
-├── routes/         HTTP endpoints — code, claims, cases, analytics, icd, parse, payers, health
-├── services/       policy gate, EDI 837/835, FHIR, ontology providers
+├── routes/         HTTP endpoints — code, claims, cases, analytics, icd, parse, payers, admin, health
+├── services/       policy gate, EDI 837/835, FHIR, embedding model, warm-up, account provisioning
 ├── scripts/        ICD / SNOMED / CPT ingestion and embedding backfill
-├── tests/          236 tests
+├── tests/          285 tests
 ├── auth.py         JWT verification, Principal, role and tenant checks
 ├── database.py     single async data layer
 ├── middleware.py   request correlation
