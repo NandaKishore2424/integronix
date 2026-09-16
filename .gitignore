@@ -42,3 +42,6 @@ backend/.pytest_cache/
 .dev/
 .claude/
 .mcp.json
+
+# ── Personal study notes (learning material, never pushed) ──
+study-material/
