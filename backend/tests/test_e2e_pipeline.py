@@ -489,6 +489,25 @@ class TestCodeRunEndpoint:
         error_at = data.get("error_at")
         assert not error_at, f"Pipeline reported an error at node: {error_at}"
 
+    def test_audit_with_a_human_code_completes(self, client):
+        """
+        Regression: every run with a human code failed at audit_comparison,
+        which read a table that never existed. No test sent a human code, so
+        it first surfaced in the browser.
+        """
+        res = client.post(
+            "/api/v1/code/run",
+            json={"raw_text": self.PRIYA_RAMAN_NOTE, "human_icd_code": "J15.9"},
+        )
+        assert res.status_code == 200, f"Expected 200, got {res.status_code}: {res.text[:200]}"
+        data = res.json()
+        assert data.get("discrepancy_type") in {
+            "EXACT_MATCH", "SPECIFICITY_IMPROVEMENT", "OVERCODING",
+            "CODE_DIVERGENCE", "UNSUPPORTED_CODE",
+        }
+        assert data["discrepancy"]["human_code"] == "J15.9"
+        assert data["discrepancy"]["ai_evidence"]
+
 
 @pytest.mark.integration
 class TestClaims:

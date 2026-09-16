@@ -79,9 +79,12 @@ async def audit_comparison_node(state: CodingState) -> CodingState:
         drg_note = " Human coded MCC not supported by clinical documentation."
     state["drg_flag"] = drg_flag
 
-    # Fetch evidence snippets for both AI and human codes
-    ai_evidence = await fetch_evidence_snippet(ai_code)
-    human_evidence = await fetch_evidence_snippet(human_code)
+    # Evidence comes from the sentences the extraction step quoted from this
+    # chart, the same text the code decision was scored against.
+    ai_evidence = documented_evidence(state)
+    human_evidence = (
+        ai_evidence if human_code in _supported_codes(state) else NO_EVIDENCE
+    )
 
     # Now we can determine the overall type of discrepancy and create a clear explanation.
     if ai_code == human_code:
@@ -153,13 +156,32 @@ async def audit_comparison_node(state: CodingState) -> CodingState:
     return state
 
 
-async def fetch_evidence_snippet(icd_code: str) -> str:
+NO_EVIDENCE = "No evidence in this chart was linked to this code."
+_EVIDENCE_MAX_CHARS = 500
+
+
+def documented_evidence(state: CodingState) -> str:
     """
-    Fetch supporting evidence for the given ICD code from the database.
+    The verbatim evidence quotes the extraction step attached to each
+    diagnosis, de-duplicated and joined.
+
+    This used to read an `icd_evidence` table that no migration ever created,
+    so every run with a human code failed at this node with a 404. Tests did
+    not catch it because the fake data layer answers any table name.
     """
-    evidence_row = await select_one(
-        table="icd_evidence",
-        query="snippet",
-        filters={"icd_code": f"eq.{icd_code}"},
-    )
-    return evidence_row["snippet"] if evidence_row else "No evidence available."
+    diagnoses = (state.get("structured_entities") or {}).get("diagnoses") or []
+    quotes = [(d.get("evidence_text") or "").strip() for d in diagnoses]
+    unique = list(dict.fromkeys(q for q in quotes if q))
+    if not unique:
+        return NO_EVIDENCE
+    return " … ".join(unique)[:_EVIDENCE_MAX_CHARS]
+
+
+def _supported_codes(state: CodingState) -> set[str]:
+    """Codes the pipeline itself derived from this chart's evidence."""
+    codes = {state.get("final_icd_code")}
+    for entry in (state.get("icd_codes") or []) + (state.get("candidate_icd_codes") or []):
+        if entry.get("code"):
+            codes.add(entry["code"])
+    codes.discard(None)
+    return codes
