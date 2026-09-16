@@ -260,6 +260,99 @@ class TestAdjudicationConcurrency:
         assert details["total_allowed_amount"] <= 100.0
 
 
+class TestDiagnosisOnlyClaims:
+    """
+    Regression: a claim with no procedures is priced from the ICD code's base
+    reimbursement (financial_calculator's fallback), but adjudication read only
+    CPT line items. A 1,200 claim was "approved" with 0 allowed and 0 paid, and
+    still labelled PARTIALLY_PAID. Found in the browser during the move to the
+    Mumbai database.
+    """
+
+    CLAIM = {
+        "id": "66666666-6666-6666-6666-666666666666",
+        "status": "SUBMITTED",
+        "organization_id": "00000000-0000-0000-0000-000000000001",
+        "payer_id": "33333333-3333-3333-3333-333333333333",
+        "total_billed_amount": 1200.0,
+        "claim_data": {
+            "financial_summary": {"line_items": [], "total_estimated_revenue": 1200.0},
+            "icd_codes": [{"code": "E11.9", "base_reimbursement": 1200.0},
+                          {"code": "E11.A", "base_reimbursement": 0}],
+        },
+        "payers": {"base_allowed_multiplier": 1.0},
+    }
+
+    def _approve(self, payer_client, fake_db, claim):
+        fake_db.on("select_one", claim)
+        fake_db.on("select", [{"id": "33333333-3333-3333-3333-333333333333"}])
+        fake_db.on("rpc", {"ok": True, "previous_status": "SUBMITTED", "new_status": "PARTIALLY_PAID"})
+        return payer_client.post(
+            f"/api/v1/claims/adjudicate/{claim['id']}",
+            json={"action": "APPROVE", "payer_responsibility_pct": 0.8},
+        )
+
+    def test_approval_pays_the_diagnosis_reimbursement(self, payer_client, fake_db):
+        res = self._approve(payer_client, fake_db, self.CLAIM)
+        assert res.status_code == 200
+        details = res.json()["adjudication_details"]
+        assert details["total_allowed_amount"] == 1200.0
+        assert details["total_paid_amount"] == 960.0
+        assert details["patient_responsibility"] == 240.0
+
+        rpc_call = next(c for c in fake_db.calls if c[0] == "rpc")
+        assert rpc_call[2]["p_total_allowed"] == "1200.00"
+
+    def test_approval_that_would_pay_nothing_is_refused(self, payer_client, fake_db):
+        unpriced = {**self.CLAIM, "claim_data": {
+            "financial_summary": {"line_items": []},
+            "icd_codes": [{"code": "Z00.00", "base_reimbursement": 0}],
+        }}
+        res = self._approve(payer_client, fake_db, unpriced)
+        assert res.status_code == 422
+        assert "would pay nothing" in res.json()["detail"]
+        assert not [c for c in fake_db.calls if c[0] == "rpc"], "nothing may be written"
+
+    def test_denial_still_works_for_an_unpriced_claim(self, payer_client, fake_db):
+        unpriced = {**self.CLAIM, "claim_data": {"financial_summary": {"line_items": []}}}
+        fake_db.on("select_one", unpriced)
+        fake_db.on("select", [{"id": "33333333-3333-3333-3333-333333333333"}])
+        fake_db.on("rpc", {"ok": True, "previous_status": "SUBMITTED", "new_status": "DENIED"})
+        res = payer_client.post(
+            f"/api/v1/claims/adjudicate/{unpriced['id']}",
+            json={"action": "DENY", "denial_reason": "Not covered"},
+        )
+        assert res.status_code == 200
+        assert res.json()["adjudication_details"]["status"] == "DENIED"
+
+
+class TestAllowedAmount:
+    def _allowed(self, claim_data, multiplier="1.0", billed=1000):
+        from decimal import Decimal
+
+        from routes.claims import _allowed_amount
+        return _allowed_amount(claim_data, Decimal(multiplier), billed)
+
+    def test_procedures_take_priority_over_the_diagnosis(self):
+        data = {"financial_summary": {"line_items": [{"base_price": 27.53}, {"base_price": 14.5}]},
+                "icd_codes": [{"base_reimbursement": 900}]}
+        assert str(self._allowed(data)) == "42.03"
+
+    def test_diagnosis_reimbursement_is_used_without_procedures(self):
+        data = {"financial_summary": {"line_items": []},
+                "icd_codes": [{"base_reimbursement": 600}, {"base_reimbursement": 150.25}]}
+        assert str(self._allowed(data)) == "750.25"
+
+    def test_contract_multiplier_applies_and_is_capped_at_billed(self):
+        data = {"icd_codes": [{"base_reimbursement": 600}]}
+        assert str(self._allowed(data, multiplier="1.5")) == "900.00"
+        assert str(self._allowed(data, multiplier="2.0")) == "1000.00"
+
+    def test_missing_data_allows_nothing(self):
+        assert str(self._allowed(None)) == "0.00"
+        assert str(self._allowed({})) == "0.00"
+
+
 class TestAdjudicationAuthorisation:
     def test_hospital_user_cannot_adjudicate(self, client):
         res = client.post(

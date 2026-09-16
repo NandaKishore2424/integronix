@@ -26,6 +26,29 @@ def _money(value) -> Decimal:
     return Decimal(str(value or 0)).quantize(CENT, rounding=ROUND_HALF_UP)
 
 
+def _allowed_amount(claim_data: dict | None, payer_multiplier: Decimal, billed) -> Decimal:
+    """
+    What the payer allows: base prices × the payer's contract multiplier, never
+    more than the hospital billed.
+
+    The basis matches how the pipeline priced the encounter
+    (agents/financial_calculator.py): CPT/HCPCS line items when there are
+    procedures, otherwise the ICD codes' base reimbursement. Adjudication used
+    to read only the line items, so a diagnosis-only claim billed at 1,200 was
+    "approved" with 0 allowed and 0 paid.
+    """
+    claim_data = claim_data or {}
+    line_items = (claim_data.get("financial_summary") or {}).get("line_items") or []
+    if line_items:
+        prices = [item.get("base_price") for item in line_items]
+    else:
+        prices = [code.get("base_reimbursement") for code in claim_data.get("icd_codes") or []]
+    # Sum in Decimal, quantize ONCE at the end: quantizing per line and summing
+    # loses or creates cents relative to the true total.
+    base = sum((Decimal(str(price or 0)) for price in prices), Decimal("0"))
+    return min(_money(base * payer_multiplier), _money(billed))
+
+
 def _uuid_or_none(value: str | None) -> str | None:
     """
     Coerce an id to a uuid string, or None.
@@ -227,22 +250,21 @@ async def submit_claim(
         payer_multiplier = Decimal(str(payer_policy.get("base_allowed_multiplier") or "1.0"))
         payer_responsibility_pct = float(pct)  # echoed in the response only
 
-        financial_summary = req.claim_data.get("financial_summary") or {}
-        line_items = financial_summary.get("line_items") or []
+        total_allowed = _allowed_amount(req.claim_data, payer_multiplier, req.total_billed_amount)
 
-        # Sum in Decimal, quantize ONCE at the end — quantizing per line and
-        # summing loses/creates cents relative to the true total.
-        total_allowed = _money(sum(
-            (Decimal(str(item.get("base_price") or 0)) * payer_multiplier
-             for item in line_items), Decimal("0")))
-        total_allowed = min(total_allowed, _money(req.total_billed_amount))
-
-        total_paid = _money(total_allowed * pct)
-        # Patient responsibility is the REMAINDER, never an independent
-        # percentage — the three amounts must sum exactly.
-        patient_resp = total_allowed - total_paid
-
-        initial_status = "PAID" if pct >= 1 else "PARTIALLY_PAID"
+        if total_allowed > 0:
+            total_paid = _money(total_allowed * pct)
+            # Patient responsibility is the REMAINDER, never an independent
+            # percentage — the three amounts must sum exactly.
+            patient_resp = total_allowed - total_paid
+            initial_status = "PAID" if pct >= 1 else "PARTIALLY_PAID"
+        else:
+            # Nothing priced: an automatic approval would pay nothing, so the
+            # claim waits for a person instead.
+            total_allowed = None
+            payer_responsibility_pct = None
+            log.warning("claims_auto_approve_skipped", session_id=req.session_id,
+                        reason="no priced services or diagnosis reimbursement")
 
     # Build the claim payload
     payload = {
@@ -478,19 +500,19 @@ async def adjudicate_claim(
             patient_resp = billed_amount  # patient owes the full billed amount if denied (simplified)
         else:  # APPROVE — the request model only admits APPROVE | DENY
             # 3. Allowed amount = base prices from the frozen claim_data
-            #    snapshot × the payer's contract multiplier.
-            claim_data = claim.get("claim_data") or {}
-            line_items = (claim_data.get("financial_summary") or {}).get("line_items") or []
-
+            #    snapshot × the payer's contract multiplier, capped at billed.
             payer_multiplier = Decimal("1.0")
             if claim.get("payers"):
                 payer_multiplier = Decimal(str(claim["payers"].get("base_allowed_multiplier") or "1.0"))
 
-            total_allowed = _money(sum(
-                (Decimal(str(item.get("base_price") or 0)) * payer_multiplier
-                 for item in line_items), Decimal("0")))
-            # The payer cannot allow more than the hospital billed.
-            total_allowed = min(total_allowed, billed_amount)
+            total_allowed = _allowed_amount(claim.get("claim_data"), payer_multiplier, billed_amount)
+            if total_allowed <= 0:
+                # An approval that pays nothing is a denial with the wrong label.
+                raise HTTPException(
+                    status_code=422,
+                    detail=("This claim has no priced services or diagnosis reimbursement, "
+                            "so approving it would pay nothing. Deny it, or correct the codes first."),
+                )
 
             pct = Decimal(str(req.payer_responsibility_pct))
             total_paid = _money(total_allowed * pct)
