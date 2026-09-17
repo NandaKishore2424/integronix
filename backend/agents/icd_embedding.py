@@ -70,6 +70,71 @@ def _infer_chapter_from_diagnoses(entities: dict) -> str | None:
     return None
 
 
+def _format_candidates(results: list[dict], excluded_chapters: set) -> list[dict]:
+    """Drop unrelated chapters, keep the top K, and shape rows like Node 4 output."""
+    filtered = [
+        r for r in (results or [])
+        if r.get("chapter") not in excluded_chapters
+    ][:EMBEDDING_TOP_K]
+
+    candidates = []
+    for r in filtered:
+        candidates.append({
+            "code":               r["code"],
+            "description":        r["description"],
+            "is_billable":        r.get("is_billable", True),
+            "is_cc":              r.get("is_cc", False),
+            "is_mcc":             r.get("is_mcc", False),
+            "base_reimbursement": float(r.get("base_reimbursement", 0)),
+            "icd_version":        r.get("version", "ICD-10-CM-2024"),
+            # Embedding-specific fields
+            "mapping_type":       "approximate",
+            "confidence":         float(r.get("similarity", 0.70)),
+            "is_primary":         False,    # Node 6 decides the best
+            "source":             "embedding",
+        })
+    return candidates
+
+
+async def find_icd_candidates_by_vector(text: str, session_id: str = "") -> list[dict]:
+    """
+    Vector-search candidates for ONE diagnosis phrase.
+
+    The node below only embeds diagnoses[0]. The decision node calls this for
+    each later diagnosis that nothing else could code — which is how "chronic
+    kidney disease stage 3" gets candidates at all when it is the second line
+    of a note. Returns [] on any failure: a diagnosis left uncoded is
+    reported in the decision trace, never guessed.
+    """
+    text = (text or "").strip()
+    if not text:
+        return []
+
+    chapter = _infer_chapter_from_diagnoses({"diagnoses": [{"text": text}]})
+    excluded_chapters = UNRELATED_CHAPTER_PAIRS.get(chapter, set()) if chapter else set()
+    try:
+        query_vector = _embed_text(text)
+        results = await rpc("match_icd_codes", {
+            "query_embedding":      _vector_to_pg_literal(query_vector),
+            "similarity_threshold": SIMILARITY_THRESHOLD,
+            "match_count":          EMBEDDING_TOP_K + 5,
+        })
+    except Exception as e:
+        log.error("embedding_lookup_failed", session_id=session_id,
+                  error_type=type(e).__name__, error=str(e))
+        return []
+
+    candidates = _format_candidates(results, excluded_chapters)
+    log.info(
+        "embedding_lookup_complete",
+        session_id=session_id,
+        query_text=text[:80],
+        candidates_found=len(candidates),
+        top_code=candidates[0]["code"] if candidates else None,
+    )
+    return candidates
+
+
 @safe_node("icd_embedding")
 async def icd_embedding_node(state: CodingState) -> CodingState:
     # This is the main function for the embedding node. It's only called
@@ -132,13 +197,10 @@ async def icd_embedding_node(state: CodingState) -> CodingState:
         threshold=SIMILARITY_THRESHOLD,
     )
 
-    # Apply chapter exclusion guardrail
-    filtered = [
-        r for r in results
-        if r.get("chapter") not in excluded_chapters
-    ][:EMBEDDING_TOP_K]
+    # Apply chapter exclusion guardrail, then format like Node 4 output
+    candidates = _format_candidates(results, excluded_chapters)
 
-    if not filtered:
+    if not candidates:
         log.warning(
             "embedding_no_matches",
             session_id=session_id,
@@ -149,24 +211,6 @@ async def icd_embedding_node(state: CodingState) -> CodingState:
         state["candidate_icd_codes"] = []
         state["mapping_path"] = "no_mapping"
         return state
-
-    # Format candidates to match same structure as Node 4 output
-    candidates = []
-    for r in filtered:
-        candidates.append({
-            "code":               r["code"],
-            "description":        r["description"],
-            "is_billable":        r.get("is_billable", True),
-            "is_cc":              r.get("is_cc", False),
-            "is_mcc":             r.get("is_mcc", False),
-            "base_reimbursement": float(r.get("base_reimbursement", 0)),
-            "icd_version":        r.get("version", "ICD-10-CM-2024"),
-            # Embedding-specific fields
-            "mapping_type":       "approximate",
-            "confidence":         float(r.get("similarity", 0.70)),
-            "is_primary":         False,    # Node 6 decides the best
-            "source":             "embedding",
-        })
 
     state["candidate_icd_codes"] = candidates
     state["mapping_path"]        = "embedding"
