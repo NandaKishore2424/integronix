@@ -273,14 +273,20 @@ function ClaimRow({ claim, onAppeal }: { claim: Claim; onAppeal: () => void }) {
     return (
         <motion.li
             variants={{ hidden: { opacity: 0, y: 12 }, shown: { opacity: 1, y: 0, transition: { duration: 0.3 } } }}
-            className="glass-card p-5 transition-colors hover:border-white/15"
+            className="glass-card px-5 py-4 transition-colors hover:border-white/15"
         >
-            <div className="grid gap-5 lg:grid-cols-12 lg:items-center">
+            <div className="grid gap-4 lg:grid-cols-12 lg:items-center">
                 <div className="lg:col-span-4 min-w-0">
-                    <p className={`truncate font-semibold ${claim.patient_name ? 'text-white' : 'italic text-slate-400'}`}>
-                        {claim.patient_name || 'Patient name not recorded'}
-                    </p>
-                    <p className="mt-1 text-xs text-slate-500">
+                    <div className="flex flex-wrap items-center gap-2">
+                        <p className={`truncate font-semibold ${claim.patient_name ? 'text-white' : 'italic text-slate-400'}`}>
+                            {claim.patient_name || 'Patient name not recorded'}
+                        </p>
+                        <span className={`inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider ${config.color}`}>
+                            <Icon className="h-3 w-3" />
+                            {config.label}
+                        </span>
+                    </div>
+                    <p className="mt-1.5 text-xs text-slate-500">
                         <span className="font-mono">#{claim.id.split('-')[0]}</span>
                         {' · '}
                         {new Date(claim.created_at).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}
@@ -289,7 +295,7 @@ function ClaimRow({ claim, onAppeal }: { claim: Claim; onAppeal: () => void }) {
                     </p>
                 </div>
 
-                <div className="lg:col-span-5">
+                <div className="lg:col-span-4">
                     <div className="grid grid-cols-4 gap-3">
                         <Amount label="Billed" value={claim.total_billed_amount} />
                         <Amount label="Allowed" value={allowed} tone="text-slate-300" />
@@ -298,7 +304,7 @@ function ClaimRow({ claim, onAppeal }: { claim: Claim; onAppeal: () => void }) {
                     </div>
                     {allowed > 0 && (
                         <div
-                            className="mt-3 flex h-1.5 overflow-hidden rounded-full bg-white/[0.06]"
+                            className="mt-2.5 flex h-1.5 overflow-hidden rounded-full bg-white/[0.06]"
                             title={`Payer paid ${Math.round(paidPct)}%, patient owes ${Math.round(patientPct)}% of the allowed amount`}
                         >
                             <div className="h-full bg-success" style={{ width: `${paidPct}%` }} />
@@ -307,37 +313,30 @@ function ClaimRow({ claim, onAppeal }: { claim: Claim; onAppeal: () => void }) {
                     )}
                 </div>
 
-                <div className="lg:col-span-3 flex flex-wrap items-center gap-2 lg:justify-end">
-                    <span className={`inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-[11px] font-bold uppercase tracking-wider ${config.color}`}>
-                        <Icon className="h-3 w-3" />
-                        {config.label}
-                    </span>
-                </div>
-            </div>
-
-            <div className="mt-4 flex flex-wrap items-center justify-end gap-2 border-t border-white/[0.05] pt-4">
-                <EdiLink
-                    href={exportEdiUrl(claim.id)}
-                    label="Claim file (837)"
-                    title="EDI 837 claim"
-                    detail="The claim as a raw ANSI X12 file, the format hospitals send to payers. It is machine-readable data, not a printable form."
-                />
-                {adjudicated && (
+                <div className="lg:col-span-4 flex flex-wrap items-center gap-2 lg:justify-end">
                     <EdiLink
-                        href={exportEdi835Url(claim.id)}
-                        label="Remittance (835)"
-                        title="EDI 835 remittance advice"
-                        detail="The payer's payment explanation as a raw ANSI X12 file: what was allowed, paid and left to the patient."
+                        href={exportEdiUrl(claim.id)}
+                        label="Claim 837"
+                        title="EDI 837 claim file"
+                        detail="The claim as a raw ANSI X12 file, the format hospitals send to payers. It is machine-readable data, not a printable form."
                     />
-                )}
-                {(claim.status === 'DENIED' || claim.status === 'PARTIALLY_PAID') && (
-                    <button
-                        onClick={onAppeal}
-                        className="rounded-lg border border-amber-500/40 px-3 py-1.5 text-xs font-semibold text-amber-300 transition-colors hover:bg-amber-500/10"
-                    >
-                        Appeal decision
-                    </button>
-                )}
+                    {adjudicated && (
+                        <EdiLink
+                            href={exportEdi835Url(claim.id)}
+                            label="Payment 835"
+                            title="EDI 835 remittance advice"
+                            detail="The payer's payment explanation as a raw ANSI X12 file: what was allowed, paid and left to the patient."
+                        />
+                    )}
+                    {(claim.status === 'DENIED' || claim.status === 'PARTIALLY_PAID') && (
+                        <button
+                            onClick={onAppeal}
+                            className="rounded-lg border border-amber-500/40 px-3 py-1.5 text-xs font-semibold text-amber-300 transition-colors hover:bg-amber-500/10"
+                        >
+                            Appeal
+                        </button>
+                    )}
+                </div>
             </div>
         </motion.li>
     );
