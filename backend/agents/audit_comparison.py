@@ -104,7 +104,7 @@ async def audit_comparison_node(state: CodingState) -> CodingState:
             f"AI selected more specific code '{ai_code}' "
             f"vs human '{human_code}'. "
             f"Clinical documentation supports the more specific code. "
-            f"Revenue impact: +${abs(delta):.2f}.{drg_note}"
+            f"Revenue impact: +₹{abs(delta):,.2f}.{drg_note}"
         )
 
     elif _is_more_specific(human_code, ai_code):

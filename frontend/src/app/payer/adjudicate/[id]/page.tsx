@@ -132,7 +132,7 @@ export default function AdjudicateClaimPage({ params }: { params: { id: string }
                     <h1 className="text-3xl font-bold tracking-tight text-white flex items-center gap-3 mb-1">
                         Claim <span className="text-emerald-500 font-mono text-xl uppercase tracking-widest">{claim.id.split('-')[0]}</span>
                     </h1>
-                    <p className="text-slate-400">Patient: <span className="text-slate-200 font-semibold">{claim.patient_name}</span> • Provider: <span className="text-slate-200 font-semibold">{orgName}</span></p>
+                    <p className="text-slate-400">Patient: {claim.patient_name ? <span className="text-slate-200 font-semibold">{claim.patient_name}</span> : <span className="italic text-slate-500">not recorded</span>} • Provider: <span className="text-slate-200 font-semibold">{orgName}</span></p>
                 </div>
                 <div className="text-right">
                     <p className="text-xs text-slate-500 uppercase tracking-widest font-bold mb-1">Status</p>

@@ -3,7 +3,8 @@
 import { useState, useEffect } from 'react';
 import { fetchClaims, Claim, appealClaim, exportEdiUrl, exportEdi835Url } from '@/lib/api';
 import { useAuth } from '@/components/AuthProvider';
-import { Landmark, CheckCircle2, Clock, AlertTriangle, Search, Activity, Download } from 'lucide-react';
+import { motion } from 'framer-motion';
+import { Landmark, CheckCircle2, Clock, AlertTriangle, Activity, FileDown } from 'lucide-react';
 
 const STATUS_CONFIG: Record<string, { color: string; icon: any; label: string }> = {
     DRAFT: { color: 'text-slate-400 bg-slate-400/10 border-slate-400/20', icon: Clock, label: 'Draft' },
@@ -14,6 +15,15 @@ const STATUS_CONFIG: Record<string, { color: string; icon: any; label: string }>
     DENIED: { color: 'text-danger bg-danger/10 border-danger/20', icon: AlertTriangle, label: 'Denied' },
     APPEALED: { color: 'text-orange-400 bg-orange-400/10 border-orange-400/20', icon: AlertTriangle, label: 'Appealed' },
 };
+
+type FilterKey = 'all' | 'open' | 'settled' | 'disputed';
+
+const FILTERS: { key: FilterKey; label: string; statuses: string[] }[] = [
+    { key: 'all', label: 'All', statuses: [] },
+    { key: 'open', label: 'Awaiting payer', statuses: ['DRAFT', 'SUBMITTED', 'ADJUDICATING'] },
+    { key: 'settled', label: 'Paid', statuses: ['PAID', 'PARTIALLY_PAID'] },
+    { key: 'disputed', label: 'Denied or appealed', statuses: ['DENIED', 'APPEALED'] },
+];
 
 function formatCurrency(amount: number) {
     return new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(amount).replace('INR', '₹');
@@ -29,6 +39,7 @@ export default function ClaimsInboxPage() {
     const [appealingClaim, setAppealingClaim] = useState<Claim | null>(null);
     const [justification, setJustification] = useState('');
     const [appealLoading, setAppealLoading] = useState(false);
+    const [filter, setFilter] = useState<FilterKey>('all');
 
     // Use logged-in user's org ID — supports any tenant (Saveetha, City General, etc.)
     const orgId = orgUser?.organization_id;
@@ -58,34 +69,56 @@ export default function ClaimsInboxPage() {
         }
     };
 
+    const counts = {
+        all: claims.length,
+        open: claims.filter((c) => FILTERS[1].statuses.includes(c.status)).length,
+        settled: claims.filter((c) => FILTERS[2].statuses.includes(c.status)).length,
+        disputed: claims.filter((c) => FILTERS[3].statuses.includes(c.status)).length,
+    };
+    const visible = claims.filter((c) => filter === 'all' || FILTERS.find((f) => f.key === filter)!.statuses.includes(c.status));
+    const totals = claims.reduce(
+        (t, c) => ({
+            billed: t.billed + (c.total_billed_amount || 0),
+            paid: t.paid + (c.total_paid_amount || 0),
+            patient: t.patient + (c.patient_responsibility || 0),
+        }),
+        { billed: 0, paid: 0, patient: 0 },
+    );
+
     return (
         <div className="min-h-screen flex flex-col">
             {/* Header */}
             <div className="px-6 py-8 border-b border-white/[0.06]">
-                <div className="max-w-7xl mx-auto flex flex-col sm:flex-row sm:items-end justify-between gap-4">
-                    <div>
-                        <div className="flex items-center gap-2 mb-2">
-                            <span className="text-xs font-semibold text-auth-primary border border-auth-primary/20 rounded-full px-3 py-1 bg-auth-primary/5 uppercase tracking-wider">
-                                RCM Pipeline
-                            </span>
-                        </div>
-                        <h1 className="text-3xl font-extrabold text-white">Claims Inbox</h1>
-                        <p className="text-sm text-slate-400 mt-2 max-w-xl">
-                            Track the status of your coded cases after submission to payers. Monitor adjudications, payments, and patient responsibility balances.
-                        </p>
-                    </div>
+                <div className="max-w-6xl mx-auto">
+                    <span className="text-xs font-semibold text-auth-primary border border-auth-primary/20 rounded-full px-3 py-1 bg-auth-primary/5 uppercase tracking-wider">
+                        RCM Pipeline
+                    </span>
+                    <h1 className="text-3xl font-extrabold text-white mt-3">Claims Inbox</h1>
+                    <p className="text-sm text-slate-400 mt-2 max-w-xl">
+                        Every claim your organisation has sent to a payer: what was billed, what the payer allowed and paid,
+                        and what the patient owes.
+                    </p>
+
+                    {!loading && claims.length > 0 && (
+                        <dl className="mt-8 grid grid-cols-2 gap-3 lg:grid-cols-4">
+                            <SummaryStat label="Claims" value={String(claims.length)} hint={`${counts.open} awaiting the payer`} />
+                            <SummaryStat label="Billed" value={formatCurrency(totals.billed)} />
+                            <SummaryStat label="Collected from payers" value={formatCurrency(totals.paid)} tone="text-success" />
+                            <SummaryStat label="Patient balances" value={formatCurrency(totals.patient)} tone="text-warning" />
+                        </dl>
+                    )}
                 </div>
             </div>
 
             {/* Content */}
             <div className="flex-1 px-6 py-8">
-                <div className="max-w-7xl mx-auto space-y-6">
+                <div className="max-w-6xl mx-auto space-y-5">
                     {loading && (
                         <div className="text-center py-20 text-slate-400 text-sm font-mono animate-pulse">
                             Loading claims...
                         </div>
                     )}
-                    
+
                     {error && (
                         <div className="glass-card p-6 flex items-center gap-3 text-danger border-danger/20">
                             <AlertTriangle className="w-5 h-5" />
@@ -106,122 +139,41 @@ export default function ClaimsInboxPage() {
                     )}
 
                     {!loading && claims.length > 0 && (
-                        <div className="glass-card overflow-hidden">
-                            <div className="overflow-x-auto">
-                                <table className="w-full text-left border-collapse">
-                                    <thead>
-                                        <tr className="border-b border-white/5 bg-white/[0.02]">
-                                            <th className="px-6 py-4 text-xs font-semibold text-slate-400 uppercase tracking-wider">Date</th>
-                                            <th className="px-6 py-4 text-xs font-semibold text-slate-400 uppercase tracking-wider">Patient</th>
-                                            <th className="px-6 py-4 text-xs font-semibold text-slate-400 uppercase tracking-wider">Payer</th>
-                                            <th className="px-6 py-4 text-xs font-semibold text-slate-400 uppercase tracking-wider text-right">Billed</th>
-                                            <th className="px-6 py-4 text-xs font-semibold text-slate-400 uppercase tracking-wider text-right">Allowed</th>
-                                            <th className="px-6 py-4 text-xs font-semibold text-slate-400 uppercase tracking-wider text-right">Paid</th>
-                                            <th className="px-6 py-4 text-xs font-semibold text-slate-400 uppercase tracking-wider text-right">Pt. Resp</th>
-                                            <th className="px-6 py-4 text-xs font-semibold text-slate-400 uppercase tracking-wider">Status</th>
-                                            <th className="px-6 py-4 text-xs font-semibold text-slate-400 uppercase tracking-wider text-right">Actions</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody className="divide-y divide-white/5">
-                                        {claims.map((claim) => {
-                                            const config = STATUS_CONFIG[claim.status] || STATUS_CONFIG.DRAFT;
-                                            const Icon = config.icon;
-                                            const allowed = claim.total_allowed_amount || 0;
-                                            const paid = claim.total_paid_amount || 0;
-                                            const resp = claim.patient_responsibility || 0;
-                                            const paidPct = allowed > 0 ? Math.round((paid / allowed) * 100) : 0;
-                                            const respPct = allowed > 0 ? Math.round((resp / allowed) * 100) : 0;
-                                            
-                                            return (
-                                                <tr key={claim.id} className="hover:bg-white/[0.02] transition-colors group">
-                                                    <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-300">
-                                                        {new Date(claim.created_at).toLocaleDateString()}
-                                                    </td>
-                                                    <td className="px-6 py-4 whitespace-nowrap">
-                                                        <div className="text-sm font-semibold text-white">{claim.patient_name}</div>
-                                                        <div className="text-[10px] font-mono text-slate-500 mt-1">{claim.id.split('-')[0]}</div>
-                                                    </td>
-                                                    <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-300">
-                                                        {claim.payers?.name || 'Unknown Payer'}
-                                                    </td>
-                                                    <td className="px-6 py-4 whitespace-nowrap text-sm font-mono text-right text-slate-300">
-                                                        {formatCurrency(claim.total_billed_amount || 0)}
-                                                    </td>
-                                                    <td className="px-6 py-4 whitespace-nowrap text-sm font-mono text-right text-slate-400">
-                                                        {claim.total_allowed_amount > 0 ? formatCurrency(claim.total_allowed_amount) : '—'}
-                                                    </td>
-                                                    <td className="px-6 py-4 whitespace-nowrap text-right">
-                                                        <div className="text-sm font-mono font-bold text-success">
-                                                            {claim.total_paid_amount > 0 ? formatCurrency(claim.total_paid_amount) : '—'}
-                                                        </div>
-                                                        {claim.total_paid_amount > 0 && allowed > 0 && (
-                                                            <div className="text-[10px] text-success/70 font-mono mt-0.5">{paidPct}%</div>
-                                                        )}
-                                                    </td>
-                                                    <td className="px-6 py-4 whitespace-nowrap text-right">
-                                                        <div className="text-sm font-mono text-warning">
-                                                            {claim.patient_responsibility > 0 ? formatCurrency(claim.patient_responsibility) : '—'}
-                                                        </div>
-                                                        {claim.patient_responsibility > 0 && allowed > 0 && (
-                                                            <div className="text-[10px] text-warning/70 font-mono mt-0.5">{respPct}%</div>
-                                                        )}
-                                                    </td>
-                                                    <td className="px-6 py-4 whitespace-nowrap">
-                                                        <div className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md border text-[10px] font-bold uppercase tracking-wider ${config.color}`}>
-                                                            <Icon className="w-3 h-3" />
-                                                            {config.label}
-                                                        </div>
-                                                    </td>
-                                                    <td className="px-6 py-4 whitespace-nowrap text-right">
-                                                        <div className="flex items-center justify-end gap-2">
-                                                            {/* EDI 837: visible for all claims */}
-                                                            <div className="relative group">
-                                                                <a
-                                                                    href={exportEdiUrl(claim.id)}
-                                                                    target="_blank"
-                                                                    className="p-1.5 flex text-slate-400 hover:text-white bg-white/5 hover:bg-white/10 rounded-lg transition-colors"
-                                                                >
-                                                                    <Download className="w-4 h-4" />
-                                                                </a>
-                                                                <div className="invisible group-hover:visible opacity-0 group-hover:opacity-100 transition-opacity absolute bottom-full right-0 mb-2 w-56 p-2.5 bg-slate-800 text-[10px] leading-relaxed text-slate-300 rounded shadow-xl z-10 border border-slate-700 pointer-events-none">
-                                                                    <strong className="text-white text-xs block mb-1">Export EDI 837</strong>
-                                                                    Raw ANSI X12 text file used for machine-to-machine HIPAA claim submission. <span className="text-amber-400 font-medium">This is raw data, not a visual PDF form.</span>
-                                                                </div>
-                                                            </div>
-
-                                                            {/* EDI 835: visible only after adjudication */}
-                                                            {['PAID', 'PARTIALLY_PAID', 'DENIED'].includes(claim.status) && (
-                                                                <div className="relative group">
-                                                                    <a
-                                                                        href={exportEdi835Url(claim.id)}
-                                                                        target="_blank"
-                                                                        className="p-1.5 flex text-amber-400 hover:text-amber-300 bg-amber-500/5 hover:bg-amber-500/15 rounded-lg transition-colors border border-amber-500/20"
-                                                                    >
-                                                                        <Download className="w-4 h-4" />
-                                                                    </a>
-                                                                    <div className="invisible group-hover:visible opacity-0 group-hover:opacity-100 transition-opacity absolute bottom-full right-0 mb-2 w-56 p-2.5 bg-slate-800 text-[10px] leading-relaxed text-slate-300 rounded shadow-xl z-10 border border-slate-700 pointer-events-none">
-                                                                        <strong className="text-white text-xs block mb-1">Export EDI 835</strong>
-                                                                        Raw ANSI X12 text file for Electronic Remittance Advice (ERA) from the payer. <span className="text-amber-400 font-medium">This is raw data, not a visual PDF form.</span>
-                                                                    </div>
-                                                                </div>
-                                                            )}
-                                                            {(claim.status === 'DENIED' || claim.status === 'PARTIALLY_PAID') && (
-                                                                <button 
-                                                                    onClick={() => setAppealingClaim(claim)}
-                                                                    className="px-3 py-1.5 text-xs font-bold text-white bg-amber-500 hover:bg-amber-500 rounded-lg transition-colors"
-                                                                >
-                                                                    Appeal
-                                                                </button>
-                                                            )}
-                                                        </div>
-                                                    </td>
-                                                </tr>
-                                            );
-                                        })}
-                                    </tbody>
-                                </table>
+                        <>
+                            <div className="flex flex-wrap gap-2" role="tablist" aria-label="Filter claims">
+                                {FILTERS.map((f) => (
+                                    <button
+                                        key={f.key}
+                                        role="tab"
+                                        aria-selected={filter === f.key}
+                                        onClick={() => setFilter(f.key)}
+                                        className={`rounded-full border px-4 py-1.5 text-sm font-medium transition-colors ${
+                                            filter === f.key
+                                                ? 'border-amber-500/50 bg-amber-500/15 text-amber-300'
+                                                : 'border-white/10 text-slate-400 hover:border-white/25 hover:text-white'
+                                        }`}
+                                    >
+                                        {f.label}
+                                        <span className="ml-2 font-mono text-xs opacity-70">{counts[f.key]}</span>
+                                    </button>
+                                ))}
                             </div>
-                        </div>
+
+                            <motion.ul
+                                key={filter}
+                                className="space-y-3"
+                                initial="hidden"
+                                animate="shown"
+                                variants={{ hidden: {}, shown: { transition: { staggerChildren: 0.05 } } }}
+                            >
+                                {visible.map((claim) => (
+                                    <ClaimRow key={claim.id} claim={claim} onAppeal={() => setAppealingClaim(claim)} />
+                                ))}
+                                {visible.length === 0 && (
+                                    <li className="glass-card p-8 text-center text-sm text-slate-400">No claims in this view.</li>
+                                )}
+                            </motion.ul>
+                        </>
                     )}
                 </div>
             </div>
@@ -260,5 +212,133 @@ export default function ClaimsInboxPage() {
                 </div>
             )}
         </div>
+    );
+}
+
+function SummaryStat({ label, value, hint, tone = 'text-white' }: { label: string; value: string; hint?: string; tone?: string }) {
+    return (
+        <div className="rounded-xl border border-white/[0.07] bg-white/[0.02] px-4 py-3">
+            <dt className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">{label}</dt>
+            <dd className={`mt-1 font-mono text-xl font-bold ${tone}`}>{value}</dd>
+            {hint && <dd className="mt-0.5 text-xs text-slate-500">{hint}</dd>}
+        </div>
+    );
+}
+
+function Amount({ label, value, tone = 'text-slate-200' }: { label: string; value: number | null; tone?: string }) {
+    return (
+        <div>
+            <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">{label}</p>
+            <p className={`mt-0.5 font-mono text-sm font-semibold ${value ? tone : 'text-slate-600'}`}>
+                {value ? formatCurrency(value) : '—'}
+            </p>
+        </div>
+    );
+}
+
+/** A download link whose explanation appears only when this link itself is hovered or focused. */
+function EdiLink({ href, label, title, detail }: { href: string; label: string; title: string; detail: string }) {
+    return (
+        <span className="relative group/tip">
+            <a
+                href={href}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1.5 rounded-lg border border-white/10 bg-white/[0.04] px-2.5 py-1.5 text-xs font-medium text-slate-300 transition-colors hover:border-white/25 hover:text-white"
+            >
+                <FileDown className="h-3.5 w-3.5" />
+                {label}
+            </a>
+            <span
+                role="tooltip"
+                className="pointer-events-none invisible absolute bottom-full right-0 z-20 mb-2 w-60 rounded-lg border border-slate-700 bg-slate-900 p-3 text-left text-xs leading-relaxed text-slate-300 opacity-0 shadow-xl transition-opacity group-hover/tip:visible group-hover/tip:opacity-100 group-focus-within/tip:visible group-focus-within/tip:opacity-100"
+            >
+                <strong className="mb-1 block text-white">{title}</strong>
+                {detail}
+            </span>
+        </span>
+    );
+}
+
+function ClaimRow({ claim, onAppeal }: { claim: Claim; onAppeal: () => void }) {
+    const config = STATUS_CONFIG[claim.status] || STATUS_CONFIG.DRAFT;
+    const Icon = config.icon;
+    const allowed = claim.total_allowed_amount || 0;
+    const paid = claim.total_paid_amount || 0;
+    const patient = claim.patient_responsibility || 0;
+    const paidPct = allowed > 0 ? (paid / allowed) * 100 : 0;
+    const patientPct = allowed > 0 ? (patient / allowed) * 100 : 0;
+    const adjudicated = ['PAID', 'PARTIALLY_PAID', 'DENIED'].includes(claim.status);
+
+    return (
+        <motion.li
+            variants={{ hidden: { opacity: 0, y: 12 }, shown: { opacity: 1, y: 0, transition: { duration: 0.3 } } }}
+            className="glass-card p-5 transition-colors hover:border-white/15"
+        >
+            <div className="grid gap-5 lg:grid-cols-12 lg:items-center">
+                <div className="lg:col-span-4 min-w-0">
+                    <p className={`truncate font-semibold ${claim.patient_name ? 'text-white' : 'italic text-slate-400'}`}>
+                        {claim.patient_name || 'Patient name not recorded'}
+                    </p>
+                    <p className="mt-1 text-xs text-slate-500">
+                        <span className="font-mono">#{claim.id.split('-')[0]}</span>
+                        {' · '}
+                        {new Date(claim.created_at).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}
+                        {' · '}
+                        {claim.payers?.name || 'Unknown payer'}
+                    </p>
+                </div>
+
+                <div className="lg:col-span-5">
+                    <div className="grid grid-cols-4 gap-3">
+                        <Amount label="Billed" value={claim.total_billed_amount} />
+                        <Amount label="Allowed" value={allowed} tone="text-slate-300" />
+                        <Amount label="Paid" value={paid} tone="text-success" />
+                        <Amount label="Patient" value={patient} tone="text-warning" />
+                    </div>
+                    {allowed > 0 && (
+                        <div
+                            className="mt-3 flex h-1.5 overflow-hidden rounded-full bg-white/[0.06]"
+                            title={`Payer paid ${Math.round(paidPct)}%, patient owes ${Math.round(patientPct)}% of the allowed amount`}
+                        >
+                            <div className="h-full bg-success" style={{ width: `${paidPct}%` }} />
+                            <div className="h-full bg-warning" style={{ width: `${patientPct}%` }} />
+                        </div>
+                    )}
+                </div>
+
+                <div className="lg:col-span-3 flex flex-wrap items-center gap-2 lg:justify-end">
+                    <span className={`inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-[11px] font-bold uppercase tracking-wider ${config.color}`}>
+                        <Icon className="h-3 w-3" />
+                        {config.label}
+                    </span>
+                </div>
+            </div>
+
+            <div className="mt-4 flex flex-wrap items-center justify-end gap-2 border-t border-white/[0.05] pt-4">
+                <EdiLink
+                    href={exportEdiUrl(claim.id)}
+                    label="Claim file (837)"
+                    title="EDI 837 claim"
+                    detail="The claim as a raw ANSI X12 file, the format hospitals send to payers. It is machine-readable data, not a printable form."
+                />
+                {adjudicated && (
+                    <EdiLink
+                        href={exportEdi835Url(claim.id)}
+                        label="Remittance (835)"
+                        title="EDI 835 remittance advice"
+                        detail="The payer's payment explanation as a raw ANSI X12 file: what was allowed, paid and left to the patient."
+                    />
+                )}
+                {(claim.status === 'DENIED' || claim.status === 'PARTIALLY_PAID') && (
+                    <button
+                        onClick={onAppeal}
+                        className="rounded-lg border border-amber-500/40 px-3 py-1.5 text-xs font-semibold text-amber-300 transition-colors hover:bg-amber-500/10"
+                    >
+                        Appeal decision
+                    </button>
+                )}
+            </div>
+        </motion.li>
     );
 }
