@@ -1,0 +1,19 @@
+# Starts the API at boot from the newest image CI published.
+# If GHCR is unreachable the pull fails harmlessly ("-") and the cached image runs.
+[Unit]
+Description=Integronix API (docker compose)
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=/opt/integronix
+ExecStartPre=-/usr/bin/docker compose pull --quiet
+ExecStart=/usr/bin/docker compose up -d --remove-orphans
+ExecStop=/usr/bin/docker compose down
+TimeoutStartSec=600
+
+[Install]
+WantedBy=multi-user.target

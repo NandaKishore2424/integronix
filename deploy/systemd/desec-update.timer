@@ -1,0 +1,9 @@
+[Unit]
+Description=Run desec-update at boot and every 6 hours
+
+[Timer]
+OnBootSec=20s
+OnUnitActiveSec=6h
+
+[Install]
+WantedBy=timers.target

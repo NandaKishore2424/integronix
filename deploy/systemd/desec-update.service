@@ -1,0 +1,10 @@
+[Unit]
+Description=Update integronix.dedyn.io with this instance's public IP
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/desec-update
+Restart=on-failure
+RestartSec=30

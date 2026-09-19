@@ -1,0 +1,26 @@
+# Production stack on the EC2 host. Lives at /opt/integronix/compose.yml.
+# The image is built and smoke-tested by CI and published to GHCR; this host
+# only pulls it. Secrets come from /opt/integronix/app.env (root, 0600).
+name: integronix
+
+services:
+  api:
+    image: ghcr.io/nandakishore2424/integronix-backend:${IMAGE_TAG:-main}
+    env_file: /opt/integronix/app.env
+    environment:
+      APP_ENV: production
+    # Loopback only: nginx on the host is the single public entry point.
+    ports:
+      - "127.0.0.1:8000:8000"
+    restart: unless-stopped
+    # The image runs as uid 10001. Nothing in it needs root powers or a
+    # writable filesystem apart from scratch space for OCR.
+    read_only: true
+    tmpfs:
+      - /tmp:size=256m
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    # t3.small has 2 GB; leave room for nginx, the OS and page cache.
+    mem_limit: 1400m
+    pids_limit: 256
