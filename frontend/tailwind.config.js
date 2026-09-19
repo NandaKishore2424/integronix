@@ -36,9 +36,11 @@ module.exports = {
         'bounce-sm': 'bounceSm 1s ease infinite',
         'fade-in': 'fadeIn 0.4s ease-out',
         'slide-up': 'slideUp 0.4s ease-out',
+        'gradient-x': 'gradientX 6s ease infinite',
       },
       keyframes: {
         bounceSm: { '0%,100%': { transform: 'translateY(0)' }, '50%': { transform: 'translateY(-4px)' } },
+        gradientX: { '0%,100%': { backgroundPosition: '0% 50%' }, '50%': { backgroundPosition: '100% 50%' } },
       },
       backgroundImage: {
         'gradient-accent': 'linear-gradient(135deg, #6366f1, #8b5cf6)',

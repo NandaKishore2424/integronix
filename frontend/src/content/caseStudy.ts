@@ -14,16 +14,17 @@ export const PROFILE = {
     phoneDisplay: '+91 93442 48604',
     phoneHref: 'tel:+919344248604',
     github: 'https://github.com/NandaKishore2424/integronix',
+    portfolio: 'https://nandakishorer.vercel.app/',
 } as const;
 
 /** Link to the recorded walkthrough. The video section renders only once this is set. */
 export const DEMO_VIDEO_URL: string = '';
 
 export const FACTS = [
-    { value: '98,244', label: 'ICD-10-CM codes' },
-    { value: '379,283', label: 'SNOMED CT concepts' },
-    { value: '10', label: 'pipeline stages' },
-    { value: '285', label: 'automated tests' },
+    { value: 98244, label: 'ICD-10-CM codes' },
+    { value: 379283, label: 'SNOMED CT concepts' },
+    { value: 10, label: 'pipeline stages' },
+    { value: 359, label: 'automated tests' },
 ] as const;
 
 export type StageKind = 'code' | 'llm' | 'decision';

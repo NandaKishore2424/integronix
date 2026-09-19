@@ -6,6 +6,8 @@
 
 `Python 3.12` · `FastAPI` · `LangGraph` · `Groq` · `PostgreSQL` · `pgvector` · `Supabase` · `Next.js 14` · `TypeScript` · `Docker`
 
+**Live:** [integronix.vercel.app](https://integronix.vercel.app) · **Author:** [Nanda Kishore R](https://nandakishorer.vercel.app/)
+
 ---
 
 - [At a glance](#at-a-glance)
@@ -259,6 +261,7 @@ CI also builds and smoke-tests the Docker image on every push: it must boot, ans
 - **Liveness vs. readiness.** `/health/live` touches nothing downstream — failure means restart. `/health` checks the database and returns `503` when the instance cannot serve — failure means stop routing traffic to it. Conflating the two turns a database blip into a restart loop.
 - **Correlation IDs.** Middleware assigns every request an ID and carries it through a `ContextVar`, so each log line emitted while serving that request is tagged automatically. The ID is returned as `X-Request-ID` and quoted in error responses.
 - **Rate limiting.** The pipeline endpoints spend an LLM call per request, so they sit behind a per-user token bucket — keyed on the user rather than the IP, since a hospital network shares one address.
+- **Deployment.** CI runs the tests, builds the image, boots it for a smoke test, and only then publishes it to GHCR as `:main` and `:sha-<commit>`. The API runs on a small EC2 instance that is started only when needed: at boot it updates its dynamic-DNS name, pulls the newest image and starts it behind nginx with Let's Encrypt TLS. The container is loopback-only, read-only, runs with no Linux capabilities and a memory cap. The frontend deploys to Vercel. Host configuration lives in [`deploy/`](deploy/).
 - **Container.** Multi-stage build, CPU-only PyTorch wheel (the default bundles CUDA), non-root user, and configuration injected at runtime so one image moves unchanged between environments. The embedding model is baked in and loaded **by path**: loading it by hub name inside the image fails offline, which would have broken vector search on every deploy.
 
 ## Project structure
@@ -304,13 +307,13 @@ Apply `migrations/schema/*.sql` and then `migrations/seeds/*.sql` in order, and 
 | File | Expected | Demonstrates |
 |---|---|---|
 | `01_pneumonia_simple` | `J18.9` + CPT `71045` | The full path, including a billable procedure |
-| `02_diabetes_with_complication` | `E11.42` | Documented specificity is rewarded |
+| `02_diabetes_with_complication` | `E11.42` + `E11.22` + `N18.32` | Documented specificity is rewarded; diabetes with CKD follows the ICD-10-CM "with" convention |
 | `03_negation_trap` | `E11.9` | Specificity the chart rules out is refused |
 
 All sample notes are synthetic.
 
 ---
 
-**Nanda Kishore R** · [LinkedIn](https://www.linkedin.com/in/nanda-kishore-7290551b8/)
+**Nanda Kishore R** · [Portfolio](https://nandakishorer.vercel.app/) · [LinkedIn](https://www.linkedin.com/in/nanda-kishore-7290551b8/)
 
 Integronix began as a Virtusa Jatayu Hackathon project with Subashini S and Nathin R, and has since been substantially re-engineered — authentication and tenant isolation, the transactional money path, the scoring corrections, the test suite, CI and containerisation.
