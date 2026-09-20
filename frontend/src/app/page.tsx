@@ -4,11 +4,13 @@ import {
     ArrowRight,
     ArrowUpRight,
     BrainCircuit,
+    PlayCircle,
     Cloud,
     Database,
     FileCheck,
     Layers,
     Lock,
+    Mail,
     Phone,
     Scale,
     Search,
@@ -20,6 +22,7 @@ import { BackgroundBeams } from '@/components/ui/background-beams';
 import { BentoGrid, type BentoItem } from '@/components/ui/bento-grid';
 import { CountUp, HeroItem, HeroStagger, MotionRoot, Reveal, StaggerItem, StaggerList } from '@/components/landing/motion';
 import {
+    DEMO_VIDEO_EMBED,
     DEMO_VIDEO_URL,
     FACTS,
     PROFILE,
@@ -38,11 +41,11 @@ import {
  */
 
 const NAV = [
+    { href: '#walkthrough', label: 'Walkthrough' },
     { href: '#built', label: 'What I built' },
     { href: '#how-it-works', label: 'How it works' },
     { href: '#results', label: 'Results' },
     { href: '#engineering', label: 'Engineering' },
-    { href: '#contact', label: 'Contact' },
 ];
 
 const ENGINEERING = [
@@ -300,15 +303,62 @@ export default function CaseStudyPage() {
                 </Section>
 
                 {DEMO_VIDEO_URL && (
-                    <Section id="walkthrough" eyebrow="Walkthrough" title="See the full workflow on video.">
-                        <a
-                            href={DEMO_VIDEO_URL}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="btn-primary inline-flex items-center gap-2"
-                        >
-                            Watch the recorded walkthrough <ArrowUpRight className="w-4 h-4" />
-                        </a>
+                    <Section
+                        id="walkthrough"
+                        eyebrow="Walkthrough"
+                        title="Six minutes through the whole system."
+                        intro="A coder runs a clinical note, the pipeline derives the codes and audits them against what a human coder billed, the claim goes to the payer, and the payer adjudicates it — on the deployed system, not a mock-up."
+                    >
+                        <Reveal>
+                            <div className="overflow-hidden rounded-2xl border border-white/[0.08] bg-black shadow-card">
+                                <div className="relative w-full" style={{ paddingTop: '56.25%' }}>
+                                    <iframe
+                                        className="absolute inset-0 h-full w-full"
+                                        src={DEMO_VIDEO_EMBED}
+                                        title="Integronix walkthrough"
+                                        loading="lazy"
+                                        allow="accelerometer; clipboard-write; encrypted-media; picture-in-picture; web-share"
+                                        referrerPolicy="strict-origin-when-cross-origin"
+                                        allowFullScreen
+                                    />
+                                </div>
+                            </div>
+                        </Reveal>
+
+                        <Reveal delay={0.05}>
+                            <div className="mt-6 grid gap-4 md:grid-cols-3">
+                                <div className="glass-card p-5 md:col-span-2">
+                                    <p className="font-semibold text-white mb-2">Why the app itself is not open to the public</p>
+                                    <p className="text-sm text-slate-400 leading-relaxed">
+                                        Every coding run spends a paid LLM call and writes to a hosted database, and the system
+                                        handles clinical text — so an open sign-up page would mean unmetered cost and strangers
+                                        pasting real patient notes into a project that runs on synthetic data. The server also
+                                        runs only when it is needed, rather than idling at my expense.
+                                    </p>
+                                    <p className="mt-3 text-sm text-slate-400 leading-relaxed">
+                                        So access is by request instead: <strong className="text-slate-200">email me</strong> and,
+                                        after a short call to verify who you are, I will start the server and send you credentials
+                                        for a demo account — or walk you through it live, whichever you prefer.
+                                    </p>
+                                </div>
+                                <div className="glass-card flex flex-col justify-center gap-3 p-5">
+                                    <a
+                                        href={`mailto:${PROFILE.email}?subject=Integronix%20demo%20access`}
+                                        className="btn-primary inline-flex items-center justify-center gap-2 py-2.5"
+                                    >
+                                        <Mail className="w-4 h-4" /> Request access
+                                    </a>
+                                    <a
+                                        href={DEMO_VIDEO_URL}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="inline-flex items-center justify-center gap-2 rounded-xl border border-white/10 px-4 py-2.5 text-sm font-medium text-slate-300 hover:border-white/25 hover:text-white transition-colors"
+                                    >
+                                        Watch on YouTube <ArrowUpRight className="w-4 h-4" />
+                                    </a>
+                                </div>
+                            </div>
+                        </Reveal>
                     </Section>
                 )}
 
@@ -399,7 +449,15 @@ function Hero() {
                     </p>
                 </HeroItem>
                 <HeroItem className="flex flex-col sm:flex-row items-center justify-center gap-3">
-                    <a href="#results" className="btn-primary inline-flex items-center gap-2 py-3 px-7">
+                    {DEMO_VIDEO_URL && (
+                        <a href="#walkthrough" className="btn-primary inline-flex items-center gap-2 py-3 px-7">
+                            <PlayCircle className="w-4 h-4" /> Watch the demo
+                        </a>
+                    )}
+                    <a
+                        href="#results"
+                        className="inline-flex items-center gap-2 rounded-xl border border-white/10 bg-[#0d1117]/60 px-7 py-3 text-sm font-medium text-slate-300 backdrop-blur hover:border-white/25 hover:text-white transition-colors"
+                    >
                         See real results <ArrowRight className="w-4 h-4" />
                     </a>
                     <a
@@ -585,19 +643,26 @@ function Contact() {
                     I&rsquo;d be glad to walk you through a live demo.
                 </h2>
                 <p className="text-slate-400 leading-relaxed mb-4">
-                    The live system runs on a paid LLM API and a hosted database, so rather than leaving it open to the
-                    public, I demo it personally — the coding pipeline, the payer workflow, and any part of the design
-                    you&rsquo;d like to explore in more depth.
+                    Each run spends a paid LLM call against a hosted database, and the system takes clinical text, so the app
+                    is not open to public sign-up. Email me and, after a short call to verify who you are, I&rsquo;ll start the
+                    server and send you credentials for a demo account — or walk you through it live, whichever you prefer.
                 </p>
                 <p className="text-slate-400 leading-relaxed mb-10">
-                    Please feel free to reach out on LinkedIn or by phone, and I&rsquo;ll get back to you as soon as I can.
+                    LinkedIn and phone work just as well, and the recorded walkthrough above shows the entire workflow if you
+                    would rather just watch.
                 </p>
                 <div className="flex flex-col sm:flex-row items-center justify-center gap-3">
+                    <a
+                        href={`mailto:${PROFILE.email}?subject=Integronix%20demo%20access`}
+                        className="btn-primary inline-flex items-center gap-2 py-3 px-7"
+                    >
+                        <Mail className="w-4 h-4" /> {PROFILE.email}
+                    </a>
                     <a
                         href={PROFILE.linkedin}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="btn-primary inline-flex items-center gap-2 py-3 px-7"
+                        className="inline-flex items-center gap-2 rounded-xl border border-white/10 px-7 py-3 text-sm font-medium text-slate-300 hover:border-white/25 hover:text-white transition-colors"
                     >
                         Connect on LinkedIn <ArrowUpRight className="w-4 h-4" />
                     </a>

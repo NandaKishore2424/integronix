@@ -6,7 +6,9 @@
 
 `Python 3.12` · `FastAPI` · `LangGraph` · `Groq` · `PostgreSQL` · `pgvector` · `Supabase` · `Next.js 14` · `TypeScript` · `Docker`
 
-**Live:** [integronix.vercel.app](https://integronix.vercel.app) · **Author:** [Nanda Kishore R](https://nandakishorer.vercel.app/)
+**Demo video:** [6-minute walkthrough](https://youtu.be/WPeQFqlHPM0) · **Live:** [integronix.vercel.app](https://integronix.vercel.app) · **Author:** [Nanda Kishore R](https://nandakishorer.vercel.app/)
+
+The deployed app is not open to public sign-up: every coding run spends a paid LLM call against a hosted database, and the server is started on demand rather than left idling. The walkthrough above shows the whole workflow; for hands-on access, email <r.nandakishore24@gmail.com> and I'll start the server and send demo credentials after a short call.
 
 ---
 

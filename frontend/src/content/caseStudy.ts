@@ -15,10 +15,14 @@ export const PROFILE = {
     phoneHref: 'tel:+919344248604',
     github: 'https://github.com/NandaKishore2424/integronix',
     portfolio: 'https://nandakishorer.vercel.app/',
+    email: 'r.nandakishore24@gmail.com',
 } as const;
 
 /** Link to the recorded walkthrough. The video section renders only once this is set. */
-export const DEMO_VIDEO_URL: string = '';
+export const DEMO_VIDEO_URL: string = 'https://youtu.be/WPeQFqlHPM0';
+
+/** The same video as a privacy-preserving embed: youtube-nocookie sets no tracking cookie until play. */
+export const DEMO_VIDEO_EMBED = 'https://www.youtube-nocookie.com/embed/WPeQFqlHPM0?rel=0';
 
 export const FACTS = [
     { value: 98244, label: 'ICD-10-CM codes' },
