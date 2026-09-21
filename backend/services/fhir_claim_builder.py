@@ -30,11 +30,17 @@ _CPT_SYSTEM = "http://www.ama-assn.org/go/cpt"
 
 
 def _icd_system_for(icd_version: Optional[str], mapping_path: Optional[str]) -> str:
-    """Return the correct FHIR coding system URI based on pipeline output."""
+    """Return the FHIR coding system URI for the path that produced the code.
+
+    Only the WHO ICD-11 path yields ICD-11 codes; every local path (crosswalk,
+    vector search, text search) returns ICD-10-CM codes. The organisation's
+    icd_version is a preference, so it no longer decides the label: an org set
+    to ICD-11 without WHO API access was sending ICD-10-CM codes marked ICD-11.
+    """
     if mapping_path and mapping_path in _ICD_SYSTEM_MAP:
         return _ICD_SYSTEM_MAP[mapping_path]
-    if icd_version and icd_version in _ICD_SYSTEM_MAP:
-        return _ICD_SYSTEM_MAP[icd_version]
+    if mapping_path and "icd11" in mapping_path.lower():
+        return _ICD_SYSTEM_MAP["ICD-11"]
     return _ICD_SYSTEM_MAP["ICD-10-CM"]
 
 

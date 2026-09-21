@@ -303,13 +303,30 @@ export async function appealClaim(claimId: string, justification: string): Promi
     return res.json();
 }
 
-export function exportEdiUrl(claimId: string): string {
-    return `${API_BASE}/api/v1/claims/export/edi/${claimId}`;
-}
+export type EdiKind = '837' | '835';
 
-/** Returns the URL for downloading the EDI 835 remittance advice (PAID / DENIED claims only) */
-export function exportEdi835Url(claimId: string): string {
-    return `${API_BASE}/api/v1/claims/export/edi835/${claimId}`;
+/**
+ * Download a claim's EDI file (837 claim or 835 remittance) and save it.
+ *
+ * The export routes require the caller's JWT like every other API route. A
+ * plain <a href> cannot send an Authorization header, so these used to open a
+ * 401 instead of a file. Fetch with the token, then hand the browser a blob.
+ */
+export async function downloadEdi(claimId: string, kind: EdiKind): Promise<void> {
+    const path = kind === '837' ? 'edi' : 'edi835';
+    const res = await apiFetch(`${API_BASE}/api/v1/claims/export/${path}/${claimId}`);
+    if (!res.ok) {
+        const err = await res.json().catch(() => ({ detail: `HTTP ${res.status}` }));
+        throw new ApiError(res.status, err.detail ?? `HTTP ${res.status}`);
+    }
+    const url = URL.createObjectURL(new Blob([await res.text()], { type: 'text/plain' }));
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `claim-${claimId.split('-')[0]}-${kind}.x12`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
 }
 
 

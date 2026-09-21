@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { fetchClaims, Claim, appealClaim, exportEdiUrl, exportEdi835Url } from '@/lib/api';
+import { fetchClaims, Claim, appealClaim, downloadEdi, type EdiKind } from '@/lib/api';
 import { useAuth } from '@/components/AuthProvider';
 import { motion } from 'framer-motion';
 import { Landmark, CheckCircle2, Clock, AlertTriangle, Activity, FileDown } from 'lucide-react';
@@ -236,19 +236,30 @@ function Amount({ label, value, tone = 'text-slate-200' }: { label: string; valu
     );
 }
 
-/** A download link whose explanation appears only when this link itself is hovered or focused. */
-function EdiLink({ href, label, title, detail }: { href: string; label: string; title: string; detail: string }) {
+/** A download button whose explanation appears only when this button itself is hovered or focused. */
+function EdiLink({ claimId, kind, label, title, detail }: { claimId: string; kind: EdiKind; label: string; title: string; detail: string }) {
+    const [busy, setBusy] = useState(false);
+    const download = async () => {
+        setBusy(true);
+        try {
+            await downloadEdi(claimId, kind);
+        } catch (err: any) {
+            alert(`Could not download the ${kind} file: ${err.message}`);
+        } finally {
+            setBusy(false);
+        }
+    };
     return (
         <span className="relative group/tip">
-            <a
-                href={href}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-flex items-center gap-1.5 rounded-lg border border-white/10 bg-white/[0.04] px-2.5 py-1.5 text-xs font-medium text-slate-300 transition-colors hover:border-white/25 hover:text-white"
+            <button
+                type="button"
+                onClick={download}
+                disabled={busy}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-white/10 bg-white/[0.04] px-2.5 py-1.5 text-xs font-medium text-slate-300 transition-colors hover:border-white/25 hover:text-white disabled:opacity-60"
             >
                 <FileDown className="h-3.5 w-3.5" />
-                {label}
-            </a>
+                {busy ? 'Preparing…' : label}
+            </button>
             <span
                 role="tooltip"
                 className="pointer-events-none invisible absolute bottom-full right-0 z-20 mb-2 w-60 rounded-lg border border-slate-700 bg-slate-900 p-3 text-left text-xs leading-relaxed text-slate-300 opacity-0 shadow-xl transition-opacity group-hover/tip:visible group-hover/tip:opacity-100 group-focus-within/tip:visible group-focus-within/tip:opacity-100"
@@ -315,14 +326,16 @@ function ClaimRow({ claim, onAppeal }: { claim: Claim; onAppeal: () => void }) {
 
                 <div className="lg:col-span-4 flex flex-wrap items-center gap-2 lg:justify-end">
                     <EdiLink
-                        href={exportEdiUrl(claim.id)}
+                        claimId={claim.id}
+                        kind="837"
                         label="Claim 837"
                         title="EDI 837 claim file"
                         detail="The claim as a raw ANSI X12 file, the format hospitals send to payers. It is machine-readable data, not a printable form."
                     />
                     {adjudicated && (
                         <EdiLink
-                            href={exportEdi835Url(claim.id)}
+                            claimId={claim.id}
+                            kind="835"
                             label="Payment 835"
                             title="EDI 835 remittance advice"
                             detail="The payer's payment explanation as a raw ANSI X12 file: what was allowed, paid and left to the patient."

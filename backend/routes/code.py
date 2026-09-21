@@ -69,10 +69,16 @@ def _fhir_icd_system_for_state(
     icd_version: Optional[str],
     mapping_path: Optional[str],
 ) -> tuple[str, str]:
-    """Return (coding.system, coding.version) for Condition.code."""
-    iv = (icd_version or "").upper()
+    """Return (coding.system, coding.version) for Condition.code.
+
+    The system follows the path that actually produced the code, not the
+    organisation's preference. An organisation set to ICD-11 without WHO API
+    access is coded from the local ICD-10-CM tables, and labelling those codes
+    ICD-11 made the resource wrong. ``icd_version`` is accepted for the call
+    signature but deliberately not consulted.
+    """
     mp = (mapping_path or "").lower()
-    if iv == "ICD-11" or "icd11" in mp:
+    if "icd11" in mp:
         return "http://id.who.int/icd11/mms", "ICD-11"
     if mp.startswith("who_api") and "icd10" in mp:
         return "http://id.who.int/icd/release/10/2019/en", "ICD-10"
@@ -90,7 +96,7 @@ def _build_fhir_condition(
     """
     Build a minimal FHIR R4 Condition resource.
     Primary code goes into code.coding, secondary/additional into extension.
-    Uses ICD-11 MMS when org / mapping path is WHO ICD-11 (Saveetha-style).
+    Uses ICD-11 MMS only when the code really came from the WHO ICD-11 API.
     """
     if not icd_codes:
         return {}

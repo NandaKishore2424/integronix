@@ -153,7 +153,13 @@ def main() -> None:
             # Only billable (leaf) codes can appear on a claim — the decision
             # node filters non-billable candidates anyway, and the Supabase
             # free tier (500 MB) cannot hold vectors for rows that can never win.
-            extra_where="AND is_billable",
+            # External-cause codes (V–Y) and injury follow-up / sequela variants
+            # (S or T codes ending in D or S) are skipped too: they are
+            # secondary codes this workload never selects, ~27,000 rows (~45 MB).
+            extra_where=(
+                "AND is_billable AND code !~ '^[VWXY]' "
+                "AND NOT (code ~ '^[ST]' AND code ~ '[DS]$')"
+            ),
         )
 
         if os.getenv("EMBED_SNOMED") == "1":
