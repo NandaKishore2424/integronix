@@ -28,7 +28,7 @@ export const FACTS = [
     { value: 98186, label: 'ICD-10-CM codes' },
     { value: 379283, label: 'SNOMED CT concepts' },
     { value: 10, label: 'pipeline stages' },
-    { value: 359, label: 'automated tests' },
+    { value: 361, label: 'automated tests' },
 ] as const;
 
 export type StageKind = 'code' | 'llm' | 'decision';

@@ -135,7 +135,7 @@ const BUILT: BentoItem[] = [
         meta: 'CI/CD',
         status: 'DevOps',
         description:
-            'GitHub Actions runs 359 tests, builds and smoke-tests a Docker image, and publishes it. An EC2 server pulls it at boot behind nginx with Let\u2019s Encrypt HTTPS; the frontend ships on Vercel.',
+            'GitHub Actions runs 361 tests, builds and smoke-tests a Docker image, and publishes it. An EC2 server pulls it at boot behind nginx with Let\u2019s Encrypt HTTPS; the frontend ships on Vercel.',
         icon: <Cloud className="h-4 w-4 text-indigo-400" />,
         tags: ['Docker', 'GitHub Actions', 'AWS EC2', 'nginx', 'Vercel'],
         colSpan: 2,

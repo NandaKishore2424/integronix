@@ -34,7 +34,7 @@ The deployed app is not open to public sign-up: every coding run spends a paid L
 | **Money path** | Adjudication as one Postgres transaction with an optimistic lock · exact `Decimal` arithmetic · an audit trail that cannot be skipped |
 | **Multi-tenancy** | Organisation resolved server-side from the verified token — never from the request — and checked on every query |
 | **Interoperability** | HL7 FHIR R4 `Claim` · ANSI X12 EDI 837P and 835 |
-| **Quality** | 359 tests · CI runs with zero secrets · schema-contract tests for what mocks cannot see |
+| **Quality** | 361 tests · CI runs with zero secrets · schema-contract tests for what mocks cannot see |
 | **Operations** | Multi-stage Docker image · startup warm-up · liveness/readiness split · request correlation IDs · per-user rate limiting |
 
 ## Architecture
@@ -238,7 +238,7 @@ pytest -m integration   # live Supabase and Groq
 
 | Tier | Tests | Runs against |
 |---|---|---|
-| Hermetic | 323 | An in-memory fake of the data layer — no network, no credentials |
+| Hermetic | 325 | An in-memory fake of the data layer — no network, no credentials |
 | Integration | 36 | Live Supabase and Groq; skipped automatically without credentials |
 
 **CI runs with no secrets configured,** so a green build is evidence the hermetic tier is genuinely hermetic: the moment a test reaches the network, CI fails. Route tests assert the *shape of the query* a route issued, not just its status code — a lock only exists if the status predicate is really in the `WHERE` clause.
