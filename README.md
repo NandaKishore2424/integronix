@@ -274,7 +274,7 @@ backend/
 ├── routes/         HTTP endpoints — code, claims, cases, analytics, icd, parse, payers, admin, health
 ├── services/       policy gate, EDI 837/835, FHIR, embedding model, warm-up, account provisioning
 ├── scripts/        ICD / SNOMED / CPT ingestion and embedding backfill
-├── tests/          285 tests
+├── tests/          361 tests
 ├── auth.py         JWT verification, Principal, role and tenant checks
 ├── database.py     single async data layer
 ├── middleware.py   request correlation

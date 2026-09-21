@@ -20,7 +20,7 @@ WORKDIR /build
 COPY requirements.txt .
 
 # The CPU wheel index matters. The default torch wheel bundles CUDA and is
-# ~2.5 GB — on a t3.micro that is the difference between deploying and not.
+# ~2.5 GB — on a small instance that is the difference between deploying and not.
 RUN python -m venv /opt/venv \
     && /opt/venv/bin/pip install --upgrade pip \
     && /opt/venv/bin/pip install \
@@ -87,7 +87,7 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=120s --retries=3 \
     CMD curl -fsS http://localhost:8000/health || exit 1
 
 # One worker on purpose. The rate limiter holds state in-process, and a
-# t3.micro has one vCPU — extra workers would multiply memory (each loads the
+# The t3.small host has 2 GB of RAM — extra workers would multiply memory (each loads the
 # embedding model) while making the limiter per-worker rather than global.
 # --no-access-log: RequestContextMiddleware already emits one structured JSON
 # line per request, with the correlation id and duration. Uvicorn's plaintext
