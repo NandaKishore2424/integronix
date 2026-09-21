@@ -25,7 +25,7 @@ export const DEMO_VIDEO_URL: string = 'https://youtu.be/WPeQFqlHPM0';
 export const DEMO_VIDEO_EMBED = 'https://www.youtube-nocookie.com/embed/WPeQFqlHPM0?rel=0';
 
 export const FACTS = [
-    { value: 98244, label: 'ICD-10-CM codes' },
+    { value: 98186, label: 'ICD-10-CM codes' },
     { value: 379283, label: 'SNOMED CT concepts' },
     { value: 10, label: 'pipeline stages' },
     { value: 359, label: 'automated tests' },

@@ -74,8 +74,14 @@ def parse_icd_txt(file_path: str) -> list[IcdTxtRow]:
     Parse fixed-width ICD TXT files (codes or order file).
 
     Returns rows with dotted code, dotless code_raw, description, is_billable.
-    NOTE: is_billable is intentionally set to False for all rows here.
-    Final billable determination happens later via hierarchy leaf detection.
+
+    Billability comes from the release file itself. The order file carries an
+    official header flag in column 15: "1" is a billable code, "0" is a header
+    with more specific codes beneath it. The codes file lists billable codes
+    only. Inferring billability from the tabular XML hierarchy instead got
+    ~64,000 flags wrong: the XML omits the codes built from 7th characters
+    (S72.001A …) and some deeper subdivisions, so those leaves were never
+    marked billable, while parents such as E11.331 were.
     """
     path = Path(file_path)
     rows: list[IcdTxtRow] = []
@@ -92,11 +98,13 @@ def parse_icd_txt(file_path: str) -> list[IcdTxtRow]:
                 long_desc = _clean_text(line[77:]) if len(line) >= 78 else _clean_text(line[16:])
                 description = long_desc
                 code = _insert_dot(code_raw)
+                is_billable = line[14] == "1"
             else:
-                # Codes file format
+                # Codes file format: it lists billable codes only.
                 code_raw = _clean_text(line[:7])
                 description = _clean_text(line[8:]) if len(line) > 8 else ""
                 code = _insert_dot(code_raw)
+                is_billable = True
 
             if code_raw and description:
                 rows.append(
@@ -104,7 +112,7 @@ def parse_icd_txt(file_path: str) -> list[IcdTxtRow]:
                         code=code,
                         code_raw=code_raw,
                         description=description,
-                        is_billable=False,
+                        is_billable=is_billable,
                     )
                 )
 

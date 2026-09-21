@@ -16,8 +16,6 @@ from services.icd_loader_service import (
     bulk_insert_hierarchy,
     bulk_insert_metadata,
     bulk_insert_index_terms,
-    compute_leaf_and_parent_codes,
-    update_icd_billable_flags,
 )
 
 log = get_logger(__name__)
@@ -96,9 +94,8 @@ async def run_full_ingestion(
         log.error("phase_failed", phase="metadata", error=str(exc))
         raise
 
-    # Phase 2c: mark billable flags using hierarchy leaf detection
-    leaf_codes, parent_codes = compute_leaf_and_parent_codes(hierarchy_payload)
-    await update_icd_billable_flags(leaf_codes, parent_codes, batch_size=batch_size)
+    # Billable flags were set in phase 1 from the order file's own header flag;
+    # the hierarchy is not a reliable source for them (see parse_icd_txt).
 
     # Phase 3: Index XML (search terms)
     log.info("phase_start", phase="index")

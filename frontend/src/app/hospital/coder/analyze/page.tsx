@@ -113,7 +113,7 @@ export default function AnalyzePage() {
                     </p>
                     <div className="flex flex-wrap gap-5 mt-5">
                         {[
-                            { icon: BarChart3, value: '98,244', label: 'ICD-10-CM codes' },
+                            { icon: BarChart3, value: '98,186', label: 'ICD-10-CM codes' },
                             { icon: Activity, value: '10-stage', label: 'pipeline' },
                             { icon: Shield, value: 'Deterministic', label: 'code selection' },
                         ].map(s => (

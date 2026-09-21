@@ -105,43 +105,5 @@ async def bulk_insert_index_terms(data: Sequence[dict], batch_size: int = DEFAUL
     return inserted
 
 
-def compute_leaf_and_parent_codes(hierarchy_rows: Sequence[dict]) -> tuple[set[str], set[str]]:
-    """
-    Compute leaf and parent codes based on hierarchy rows.
-    Leaf codes are those that never appear as parent_code.
-    """
-    all_codes = {row["code"] for row in hierarchy_rows if row.get("code")}
-    parent_codes = {row["parent_code"] for row in hierarchy_rows if row.get("parent_code")}
-    leaf_codes = all_codes - parent_codes
-    return leaf_codes, parent_codes
-
-
-async def update_icd_billable_flags(
-    leaf_codes: set[str],
-    parent_codes: set[str],
-    batch_size: int = DEFAULT_BATCH_SIZE,
-) -> None:
-    """
-    Mark leaf nodes as billable and parent nodes as non-billable.
-    Uses batch PATCH updates via PostgREST.
-    """
-    client = await get_client()
-
-    async def _patch_codes(codes: Sequence[str], flag: bool) -> None:
-        for batch in _chunked(list(codes), batch_size):
-            code_filter = ",".join(batch)
-            resp = await client.patch(
-                "/icd_codes",
-                params={"code": f"in.({code_filter})"},
-                json={"is_billable": flag},
-                headers=_headers(),
-            )
-            if resp.status_code not in (200, 204):
-                log.error("icd_billable_update_failed", status=resp.status_code, detail=resp.text[:300])
-
-    await _patch_codes(sorted(leaf_codes), True)
-    await _patch_codes(sorted(parent_codes), False)
-
-
 def dataclass_rows_to_dicts(rows: Sequence[object]) -> list[dict]:
     return [asdict(r) for r in rows]

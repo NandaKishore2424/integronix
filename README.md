@@ -30,7 +30,7 @@ The deployed app is not open to public sign-up: every coding run spends a paid L
 |---|---|
 | **Problem** | Turning clinical prose into billing codes. Undercode and a hospital loses earned revenue; overcode and it is billing fraud. |
 | **AI** | A 10-node LangGraph workflow. The LLM is confined to one extraction step — every billing decision is deterministic and explainable. |
-| **Knowledge base** | 98,244 ICD-10-CM codes · 379,283 SNOMED CT concepts · 36,401 billable codes indexed as 384-dimensional vectors |
+| **Knowledge base** | 98,186 ICD-10-CM codes (74,719 billable) · 379,283 SNOMED CT concepts · 47,953 billable codes indexed as 384-dimensional vectors |
 | **Money path** | Adjudication as one Postgres transaction with an optimistic lock · exact `Decimal` arithmetic · an audit trail that cannot be skipped |
 | **Multi-tenancy** | Organisation resolved server-side from the verified token — never from the request — and checked on every query |
 | **Interoperability** | HL7 FHIR R4 `Claim` · ANSI X12 EDI 837P and 835 |
@@ -209,11 +209,11 @@ A pure, fail-closed policy gate decides whether a claim may be auto-approved: de
 
 ## Retrieval and data engineering
 
-**Vector search.** ICD-10-CM codes — every one of the **36,401 billable** codes — and a 23-code CPT/HCPCS demo catalogue (CPT itself is licensed by the AMA) are embedded with `all-MiniLM-L6-v2` (384 dimensions) and queried through pgvector. Clinicians don't write in billing vocabulary, and cosine similarity bridges that gap where keyword search returns nothing. It is deliberately the *fallback*: the deterministic crosswalk answers first. The embedding backfill targets billable codes, because non-billable codes can never be selected and vectors for them would spend storage on rows that can never win.
+**Vector search.** **47,953** of the **74,719** billable ICD-10-CM codes — every clinical code, plus injuries at their initial encounter — and a 23-code CPT/HCPCS demo catalogue (CPT itself is licensed by the AMA) are embedded with `all-MiniLM-L6-v2` (384 dimensions) and queried through pgvector. Clinicians don't write in billing vocabulary, and cosine similarity bridges that gap where keyword search returns nothing. It is deliberately the *fallback*: the deterministic crosswalk answers first. The embedding backfill targets billable codes, because non-billable codes can never be selected and vectors for them would spend storage on rows that can never win. External-cause codes (V–Y) and injury follow-up or sequela variants are left out deliberately: they are secondary codes this workload does not select, and the free database tier has a hard storage limit.
 
 **Keyword relevance floor.** Early on, a pneumonia note was billed as **S30.810 — *abrasion of lower back*** because "right *lower* lobe" matched "*lower* back" and every hit scored a flat 0.8. Matches are now scored by how much of the query they cover and must clear a floor. Returning nothing is an acceptable answer: the pipeline reports `UNKNOWN`, which cannot be billed.
 
-**Ingestion.** ICD-10-CM is parsed from the CDC/NCHS release files, with billability derived from the hierarchy itself — only leaf codes are billable. SNOMED CT is streamed from the RF2 release and inserted in batches of 50,000. The embedding backfill writes with `COPY` into a staging table followed by one join-`UPDATE` per batch: per-row updates cost minutes per thousand rows against a hosted database, the batch approach takes seconds.
+**Ingestion.** ICD-10-CM is parsed from the CDC/NCHS release files. Billability is read from the order file's own header flag. An earlier version inferred it from the tabular XML hierarchy, which does not list the codes built from 7th characters: about 51,000 real leaves were never marked billable and 12,900 parents were, so a header such as E11.331 could be proposed for a claim. Fixed in the importer and corrected in the data (64,234 rows), with the demo notes re-verified. SNOMED CT is streamed from the RF2 release and inserted in batches of 50,000. The embedding backfill writes with `COPY` into a staging table followed by one join-`UPDATE` per batch: per-row updates cost minutes per thousand rows against a hosted database, the batch approach takes seconds.
 
 ## Key decisions
 

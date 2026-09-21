@@ -98,7 +98,7 @@ const BUILT: BentoItem[] = [
         meta: 'pgvector',
         status: 'AI integration',
         description:
-            '384-dimensional sentence embeddings for 45,007 ICD-10-CM codes, stored in pgvector, so similarity and billing metadata come back in one SQL query.',
+            '384-dimensional sentence embeddings for 47,953 billable ICD-10-CM codes, stored in pgvector, so similarity and billing metadata come back in one SQL query.',
         icon: <Search className="h-4 w-4 text-orange-400" />,
         tags: ['Embeddings', 'Vector search', 'Retrieval'],
     },
